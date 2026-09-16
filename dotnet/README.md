@@ -71,8 +71,8 @@ Design decisions worth reading in the code:
 screens, the reports and the API. There is no need to keep the Go web server as well.
 
 Why that works: DuckDB is a **library**, not a server. The query runs inside DuckDB's C++ engine in both cases;
-Go or C# only sends the SQL and reads the rows. The reports run in about the same time from either language,
-and the SQL is identical. So choose the language your team knows and maintains: for a SQL Server / .NET team, that is C#.
+Go or C# only sends the SQL and reads the rows. On this laptop the monthly revenue report took 60-90 ms from
+either app, and the SQL is the same apart from a few type casts for .NET. So choose the language your team knows and maintains: for a SQL Server / .NET team, that is C#.
 
 What still makes sense to keep separate:
 
