@@ -1,6 +1,6 @@
 module github.com/irlm/duckstore
 
-go 1.27.1
+go 1.26.0
 
 require (
 	github.com/duckdb/duckdb-go/v2 v2.10505.0

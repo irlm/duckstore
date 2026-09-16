@@ -6,3 +6,9 @@
 2026/09/16 08:26:05 POST /analytics/race/concurrent-updates 9.405s
 2026/09/16 08:26:05 GET /analytics/race 1ms
 2026/09/16 08:26:05 GET /analytics/race 1ms
+2026/09/16 08:29:37 POST /analytics/etl 0s
+2026/09/16 08:29:37 GET /analytics/etl 0s
+2026/09/16 08:29:39 GET /analytics/etl 0s
+2026/09/16 08:29:41 GET /analytics/etl 0s
+2026/09/16 08:29:43 GET /analytics/etl 1ms
+2026/09/16 08:29:45 GET /analytics/etl 1ms
