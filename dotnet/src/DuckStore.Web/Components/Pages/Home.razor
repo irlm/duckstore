@@ -74,7 +74,7 @@
             <tr><td>Products</td><td>ProductService → EF Core</td><td>Postgres</td><td>Few rows by key, concurrent writes, constraints, transactions</td></tr>
             <tr><td>Reports</td><td>ReportService → Dapper → DuckDB.NET</td><td>DuckDB file</td><td>Millions of rows scanned and aggregated, read-only</td></tr>
             <tr><td>REST API (/api/…)</td><td>Minimal APIs over the same services</td><td>Both</td><td>Same code for the UI and for other clients</td></tr>
-            <tr><td>Warehouse refresh</td><td>Go ETL (<code>make etl</code>)</td><td>Postgres → DuckDB</td><td>A batch job; this app reopens the new file on its own</td></tr>
+            <tr><td>ETL</td><td>WarehouseBuilder runs the SQL files in <code>etl/</code></td><td>Postgres → DuckDB</td><td>A batch job that builds a new file; the reports switch to it on their own</td></tr>
         </tbody>
     </MudSimpleTable>
 </MudPaper>

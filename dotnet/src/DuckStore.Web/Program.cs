@@ -23,6 +23,8 @@ builder.Services.AddSingleton<ReportService>();
 
 // ETL: Postgres -> DuckDB warehouse, from the shared SQL files in etl/.
 builder.Services.AddSingleton<WarehouseBuilder>();
+builder.Services.AddSingleton<EtlService>();
+builder.Services.AddHostedService<EtlSchedule>();
 
 // API: OpenAPI document + Scalar UI at /scalar, errors as ProblemDetails.
 builder.Services.AddOpenApi();
@@ -50,6 +52,7 @@ app.MapOpenApi();
 app.MapScalarApiReference();
 app.MapProductEndpoints();
 app.MapReportEndpoints();
+app.MapEtlEndpoints();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

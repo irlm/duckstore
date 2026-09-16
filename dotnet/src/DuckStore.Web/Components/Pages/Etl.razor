@@ -1,0 +1,134 @@
+@page "/etl"
+@implements IDisposable
+@inject EtlService EtlService
+@inject ReportService ReportService
+@inject IConfiguration Configuration
+@inject ISnackbar Snackbar
+
+<PageTitle>ETL</PageTitle>
+
+<MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+    <MudText Typo="Typo.h4">ETL</MudText>
+    <EngineChip Engine="Postgres" Detail="source" />
+    <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+    <EngineChip Engine="DuckDB" Detail="warehouse" />
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlayArrow"
+               OnClick="Start" Disabled="@(_run?.IsRunning == true)">
+        @(_run?.IsRunning == true ? "Running…" : "Run ETL now")
+    </MudButton>
+</MudStack>
+
+<MudText Typo="Typo.body1" Class="mb-4" Style="max-width: 80ch">
+    The ETL copies the store from Postgres into a <b>new</b> DuckDB file, builds the star schema, exports Parquet,
+    then renames the new file over the old one. The reports keep answering from the old file until the swap,
+    and switch on their next query. The steps are the SQL files in <code>etl/</code>, the same files the Go version runs.
+</MudText>
+
+@if (_run is not null)
+{
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            @if (_run.IsRunning)
+            {
+                <MudProgressCircular Indeterminate Size="Size.Small" Color="Color.Secondary" />
+                <MudText>Running since @_run.StartedAt.ToString("HH:mm:ss") UTC (started from @_run.Trigger): step @_run.Steps.Count of @_run.ExpectedSteps</MudText>
+            }
+            else if (_run.Error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Class="flex-grow-1">The run from @_run.Trigger failed: @_run.Error</MudAlert>
+            }
+            else if (_run.Result is { } result)
+            {
+                <MudAlert Severity="Severity.Success" Class="flex-grow-1">
+                    Done in @result.Duration.TotalSeconds.ToString("F1") s: @((result.SizeBytes / 1e6).ToString("N0")) MB,
+                    orders up to #@result.MaxOrderId.ToString("N0"). The reports now read this file.
+                </MudAlert>
+            }
+        </MudStack>
+        <MudProgressLinear Color="Color.Secondary" Class="mt-3" Rounded Size="Size.Medium"
+                           Value="@(_run.ExpectedSteps == 0 ? 0 : 100.0 * _run.Steps.Count / _run.ExpectedSteps)" />
+        <StepTable Steps="@_run.Steps.Select(s => new BuildStep(s.Number, s.Label, s.Rows, s.Duration.TotalSeconds)).ToList()" />
+    </MudPaper>
+}
+else
+{
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" GutterBottom>Build in use</MudText>
+        @if (_lastError is not null)
+        {
+            <MudAlert Severity="Severity.Warning">@_lastError</MudAlert>
+        }
+        else if (_last is null)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Secondary" />
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">
+                Built @_status?.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC, orders up to #@_status?.MaxOrderId.ToString("N0").
+                Postgres has @_status?.OrdersSinceEtl.ToString("N0") newer orders.
+            </MudText>
+            <StepTable Steps="@_last.Rows" />
+        }
+    </MudPaper>
+}
+
+<MudText Typo="Typo.body2" Style="opacity: .75">
+    Other ways to run it: <code>POST /api/etl/runs</code>, <code>make dotnet-etl</code> in a terminal, or a schedule
+    (<code>Etl:ScheduleMinutes</code> in appsettings.json, now @(_scheduleMinutes > 0 ? $"every {_scheduleMinutes} minutes" : "off")).
+    Only one ETL runs at a time, across all of them.
+</MudText>
+
+@code {
+    private EtlRunSnapshot? _run;
+    private Report<BuildStep>? _last;
+    private WarehouseStatus? _status;
+    private string? _lastError;
+    private int _scheduleMinutes;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _scheduleMinutes = Configuration.GetValue("Etl:ScheduleMinutes", 0);
+        _run = EtlService.Current;
+        EtlService.Changed += OnChanged;
+        if (_run is null)
+        {
+            await LoadLastBuildAsync();
+        }
+    }
+
+    private async Task LoadLastBuildAsync()
+    {
+        try
+        {
+            _status = await ReportService.StatusAsync();
+            _last = await ReportService.LastBuildStepsAsync();
+        }
+        catch (WarehouseNotBuiltException e)
+        {
+            _lastError = e.Message;
+        }
+    }
+
+    private void Start()
+    {
+        try
+        {
+            _run = EtlService.Start("the ETL page");
+        }
+        catch (EtlAlreadyRunningException e)
+        {
+            Snackbar.Add(e.Message, Severity.Warning);
+        }
+    }
+
+    // Called from the ETL thread: hop onto the component's dispatcher to re-render.
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        _run = EtlService.Current;
+        StateHasChanged();
+    });
+
+    public void Dispose() => EtlService.Changed -= OnChanged;
+}

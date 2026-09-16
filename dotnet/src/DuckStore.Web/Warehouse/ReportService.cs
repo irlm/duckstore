@@ -134,6 +134,12 @@ public sealed class ReportService(DuckDbWarehouse warehouse, IDbContextFactory<S
         return new WarehouseStatus(etl.BuiltAt, etl.MaxOrderId, etl.DataUntil, newOrders, warehouse.FilePath);
     }
 
+    public Task<Report<BuildStep>> LastBuildStepsAsync(CancellationToken ct = default) => QueryAsync<BuildStep>("""
+        SELECT step_no AS Number, label AS Label, row_count AS Rows, seconds AS Seconds
+        FROM dw.etl_steps
+        ORDER BY step_no
+        """, null, ct);
+
     private async Task<Report<T>> QueryAsync<T>(string sql, object? parameters, CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
@@ -160,3 +166,5 @@ public sealed record CountrySales(string Region, string Country, long Orders, lo
 public sealed record EtlInfo(DateTime BuiltAt, long MaxOrderId, DateTime DataUntil);
 
 public sealed record WarehouseStatus(DateTime BuiltAt, long MaxOrderId, DateTime DataUntil, long OrdersSinceEtl, string FilePath);
+
+public sealed record BuildStep(int Number, string Label, long Rows, double Seconds);

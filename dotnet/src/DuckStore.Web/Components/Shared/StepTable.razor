@@ -1,0 +1,19 @@
+@* The steps of an ETL run: label, rows, time. *@
+<MudSimpleTable Dense Elevation="0" Class="mt-3">
+    <thead><tr><th>#</th><th>Step</th><th class="num">Rows</th><th class="num">Time</th></tr></thead>
+    <tbody>
+        @foreach (var step in Steps)
+        {
+            <tr>
+                <td>@step.Number</td>
+                <td>@step.Label</td>
+                <td class="num">@(step.Rows > 0 ? step.Rows.ToString("N0") : "")</td>
+                <td class="num">@(step.Seconds < 1 ? $"{step.Seconds * 1000:N0} ms" : $"{step.Seconds:F2} s")</td>
+            </tr>
+        }
+    </tbody>
+</MudSimpleTable>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<BuildStep> Steps { get; set; } = [];
+}

@@ -149,6 +149,12 @@ public sealed class WarehouseBuilder(WarehouseSettings settings, IConfiguration 
         }
     }
 
+    /// <summary>How many labelled steps a run reports: "-- step:" statements plus the Parquet exports.</summary>
+    public static int ExpectedSteps() =>
+        SqlFiles().Sum(f => SqlScript.Split(f.Sql).Count(s => s.Label is not null)) + ParquetExports;
+
+    private const int ParquetExports = 5;
+
     // The .sql files from the top-level etl/ folder, embedded at build time as "Etl.<name>.sql".
     private static IEnumerable<(string Name, string Sql)> SqlFiles()
     {
