@@ -15,6 +15,7 @@
          etl/ is the ETL (shared with the Go version), analytics/ holds the questions
          of the Compare page (this service runs the *.duckdb.sql files). -->
     <EmbeddedResource Include="..\..\..\etl\*.sql" LogicalName="Etl.%(Filename)%(Extension)" Link="Sql\Etl\%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\..\analytics\*.duckdb.sql" LogicalName="Analytics.%(Filename)%(Extension)" Link="Sql\Analytics\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

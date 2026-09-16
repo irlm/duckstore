@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Postgres side of the Compare page. The analytics service embeds the *.duckdb.sql files. -->
+    <EmbeddedResource Include="..\..\..\analytics\*.postgres.sql" LogicalName="Analytics.%(Filename)%(Extension)" Link="Sql\Analytics\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageReference Include="MudBlazor" Version="9.10.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />

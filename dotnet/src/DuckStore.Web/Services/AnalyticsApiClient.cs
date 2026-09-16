@@ -32,6 +32,25 @@ public sealed class AnalyticsApiClient(HttpClient http)
         return report with { Rows = rows };
     }
 
+    public async Task<IReadOnlyList<AnalyticSql>> AnalyticsSqlAsync(CancellationToken ct = default) =>
+        await GetAsync<List<AnalyticSql>>("api/analytics/", ct);
+
+    /// <summary>Runs one Compare question. The caller reads the body and the Server-Timing header.</summary>
+    public async Task<HttpResponseMessage> PostAnalyticAsync(string id, AnalyticRequest request, CancellationToken ct = default)
+    {
+        var response = await http.PostAsJsonAsync($"api/analytics/{id}", request, ct);
+        try
+        {
+            await EnsureSuccessAsync(response, ct);
+            return response;
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
     public async Task<EtlRunSnapshot> StartEtlAsync(CancellationToken ct = default)
     {
         using var response = await http.PostAsync("api/etl/runs", content: null, ct);

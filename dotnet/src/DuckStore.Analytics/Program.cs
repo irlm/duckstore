@@ -1,5 +1,6 @@
 using Dapper;
 using DuckDB.NET.Data;
+using DuckStore.Analytics.Analytics;
 using DuckStore.Analytics.Api;
 using DuckStore.Analytics.Etl;
 using DuckStore.Analytics.Warehouse;
@@ -12,6 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<WarehouseSettings>();
 builder.Services.AddSingleton<DuckDbWarehouse>();
 builder.Services.AddSingleton<ReportService>();
+builder.Services.AddSingleton<AnalyticsRunner>();
 builder.Services.AddSingleton<WarehouseBuilder>();
 builder.Services.AddSingleton<EtlService>();
 builder.Services.AddHostedService<EtlSchedule>();
@@ -53,5 +55,6 @@ app.MapScalarApiReference();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).ExcludeFromDescription();
 app.MapReportEndpoints();
 app.MapEtlEndpoints();
+app.MapAnalyticsEndpoints();
 
 app.Run();
