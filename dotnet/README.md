@@ -100,7 +100,8 @@ When to split into more processes later:
 
 - **The ETL** is the first candidate: run `DuckStore.Web.dll etl` as a scheduled job (cron, Kubernetes CronJob,
   Azure Container Apps job) instead of inside the web process, so a 13-second, all-cores build never competes
-  with web requests.
+  with web requests. When you deploy, set `Warehouse__Path` (and `ConnectionStrings__Store`) as environment
+  variables with absolute paths; the default path in appsettings.json is relative to the project folder.
 - **A reporting service** pays off when reports slow down CRUD requests even with `Warehouse:Threads` limited,
   need to scale on different machines, or belong to a different team.
 
