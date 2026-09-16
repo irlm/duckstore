@@ -11,6 +11,13 @@ package bench
 // duckdb_raw vs duckdb_star = the data model difference (joins done once, in the ETL)
 
 const (
+	sqlPGInsert   = "INSERT INTO bench.events (id, product_id, quantity, created_at) VALUES ($1, $2, $3, now())"
+	sqlDuckInsert = "INSERT INTO events (id, product_id, quantity, created_at) VALUES ($1, $2, $3, now())"
+	sqlPGUpdate   = "UPDATE bench.stock SET quantity = quantity - 1 WHERE product_id = $1"
+	sqlDuckUpdate = "UPDATE stock SET quantity = quantity - 1 WHERE product_id = $1"
+)
+
+const (
 	KeyPostgres   = "postgres"
 	KeyDuckDBRaw  = "duckdb_raw"
 	KeyDuckDBStar = "duckdb_star"
@@ -125,7 +132,8 @@ ORDER BY level1 NULLS LAST, level2 NULLS FIRST`},
 		Title:    "Distinct active customers per month",
 		Question: "COUNT(DISTINCT customer_id) per month over 2.5M orders.",
 		Why: "COUNT(DISTINCT) must remember every value it has seen. Postgres does it by sorting inside each group; " +
-			"DuckDB uses parallel hash tables on a single column. Both variants in DuckDB read the same one table, so they are close.",
+			"DuckDB uses parallel hash tables on a single column. The two DuckDB variants differ in the grouping key: " +
+			"the raw table must truncate time-zone-aware timestamps (a calendar calculation per row), the star schema groups a plain DATE.",
 		Variants: []Variant{
 			{Key: KeyPostgres, SQL: `SELECT date_trunc('month', placed_at)::date AS month,
        count(DISTINCT customer_id) AS active_customers,
@@ -166,14 +174,17 @@ ORDER BY 1`},
 activity AS (
     SELECT DISTINCT customer_id, date_trunc('month', placed_at) AS month
     FROM orders WHERE status <> 'cancelled'
+),
+pairs AS (
+    SELECT f.cohort,
+           (extract(year FROM age(a.month, f.cohort)) * 12 + extract(month FROM age(a.month, f.cohort)))::int AS months_later
+    FROM firsts f
+    JOIN activity a USING (customer_id)
 )
-SELECT f.cohort::date AS cohort,
-       (extract(year FROM age(a.month, f.cohort)) * 12 + extract(month FROM age(a.month, f.cohort)))::int AS months_later,
-       count(*) AS customers
-FROM firsts f
-JOIN activity a USING (customer_id)
+SELECT cohort::date AS cohort, months_later, count(*) AS customers
+FROM pairs
+WHERE months_later <= 12
 GROUP BY 1, 2
-HAVING (extract(year FROM age(a.month, f.cohort)) * 12 + extract(month FROM age(a.month, f.cohort))) <= 12
 ORDER BY 1, 2`},
 			{Key: KeyDuckDBRaw, SQL: `WITH firsts AS (
     SELECT customer_id, date_trunc('month', min(placed_at)) AS cohort
@@ -183,32 +194,36 @@ ORDER BY 1, 2`},
 activity AS (
     SELECT DISTINCT customer_id, date_trunc('month', placed_at) AS month
     FROM raw.orders WHERE status <> 'cancelled'
+),
+pairs AS (
+    SELECT f.cohort, date_diff('month', f.cohort, a.month) AS months_later
+    FROM firsts f
+    JOIN activity a USING (customer_id)
 )
-SELECT f.cohort::DATE AS cohort,
-       date_diff('month', f.cohort, a.month) AS months_later,
-       count(*) AS customers
-FROM firsts f
-JOIN activity a USING (customer_id)
+SELECT cohort::DATE AS cohort, months_later, count(*) AS customers
+FROM pairs
+WHERE months_later <= 12
 GROUP BY 1, 2
-HAVING months_later <= 12
 ORDER BY 1, 2`},
 			{Key: KeyDuckDBStar, SQL: `WITH firsts AS (
     SELECT customer_id, date_trunc('month', min(order_date)) AS cohort
     FROM dw.fact_orders WHERE status <> 'cancelled'
-    GROUP BY ALL
+    GROUP BY customer_id
 ),
 activity AS (
     SELECT DISTINCT customer_id, date_trunc('month', order_date) AS month
     FROM dw.fact_orders WHERE status <> 'cancelled'
+),
+pairs AS (
+    SELECT f.cohort, date_diff('month', f.cohort, a.month) AS months_later
+    FROM firsts f
+    JOIN activity a USING (customer_id)
 )
-SELECT f.cohort AS cohort,
-       date_diff('month', f.cohort, a.month) AS months_later,
-       count(*) AS customers
-FROM firsts f
-JOIN activity a USING (customer_id)
-GROUP BY ALL
-HAVING months_later <= 12
-ORDER BY ALL`},
+SELECT cohort, months_later, count(*) AS customers
+FROM pairs
+WHERE months_later <= 12
+GROUP BY 1, 2
+ORDER BY 1, 2`},
 		},
 	},
 	{
@@ -318,27 +333,42 @@ LIMIT 10`},
 		},
 	},
 	{
-		ID:       "single-inserts",
+		ID:       "tx-inserts",
 		Kind:     KindWrite,
-		Title:    "2,000 single-row INSERTs, each in its own transaction",
-		Question: "What an application does all day: one small write, commit, repeat.",
-		Why: "Every commit in DuckDB appends to its write-ahead log and updates columnar segments built for bulk data. " +
-			"Postgres is designed for exactly this pattern: a row goes into a heap page and the WAL, with commits that cost very little.",
+		Title:    "5,000 single-row INSERTs inside ONE transaction",
+		Question: "Many small statements, one commit at the end: the cost of each statement without waiting for the disk.",
+		Why: "There is only one COMMIT, so the disk wait is paid once. What remains is the work of one small statement: " +
+			"send it, bind the parameters, find where the row goes, write it, update the primary key index. " +
+			"Postgres is designed around this row-at-a-time path; DuckDB's execution engine is designed to process thousands of rows per call.",
 		Variants: []Variant{
-			{Key: KeyPostgres, SQL: "INSERT INTO bench.events (id, product_id, quantity, created_at) VALUES ($1, $2, $3, now())", Exec: pgSingleInserts},
-			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: "INSERT INTO events (id, product_id, quantity, created_at) VALUES ($1, $2, $3, now())", Exec: duckSingleInserts},
+			{Key: KeyPostgres, Label: "Postgres (bench schema)", SQL: sqlPGInsert, Exec: pgInserts(5000, true)},
+			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: sqlDuckInsert, Exec: duckInserts(5000, true)},
 		},
 	},
 	{
-		ID:       "single-updates",
+		ID:       "tx-updates",
 		Kind:     KindWrite,
-		Title:    "2,000 single-row UPDATEs by primary key",
-		Question: "Take one unit of stock, commit, repeat.",
-		Why: "Postgres finds the row through the primary key index and writes a new row version. " +
-			"DuckDB also uses its primary key index to find the row, but an update in a column store rewrites values inside compressed column segments.",
+		Title:    "5,000 single-row UPDATEs by primary key, inside ONE transaction",
+		Question: "Take one unit of stock from a random product, 5,000 times, then commit.",
+		Why: "Postgres follows the primary key B-tree to the row and writes a new row version in the same page when it can. " +
+			"DuckDB also finds the row through its primary key index, but changing a value in a column store means " +
+			"recording the new value next to compressed column segments that were written for bulk reads.",
 		Variants: []Variant{
-			{Key: KeyPostgres, SQL: "UPDATE bench.stock SET quantity = quantity - 1 WHERE product_id = $1", Exec: pgSingleUpdates},
-			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: "UPDATE stock SET quantity = quantity - 1 WHERE product_id = $1", Exec: duckSingleUpdates},
+			{Key: KeyPostgres, Label: "Postgres (bench schema)", SQL: sqlPGUpdate, Exec: pgUpdates(5000, true)},
+			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: sqlDuckUpdate, Exec: duckUpdates(5000, true)},
+		},
+	},
+	{
+		ID:       "autocommit-inserts",
+		Kind:     KindWrite,
+		Title:    "300 single-row INSERTs, each one committed on its own",
+		Question: "What an application does all day: one small write, COMMIT, repeat.",
+		Why: "A COMMIT returns only after the write-ahead log is safely on disk (fsync). When the disk is slow to confirm, " +
+			"that wait is most of the time, for both engines, and it hides the engine difference: compare with the one-transaction test above. " +
+			"On a busy server Postgres also combines the commits of many sessions into one disk flush (see the concurrency test).",
+		Variants: []Variant{
+			{Key: KeyPostgres, Label: "Postgres (bench schema)", SQL: sqlPGInsert, Exec: pgInserts(300, false)},
+			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: sqlDuckInsert, Exec: duckInserts(300, false)},
 		},
 	},
 	{
@@ -350,8 +380,8 @@ LIMIT 10`},
 			"DuckDB uses optimistic concurrency: when two transactions change the same row, one of them FAILS with a conflict error " +
 			"and the application must retry. (Across processes it is stricter: only one process can open the file for writing at all.)",
 		Variants: []Variant{
-			{Key: KeyPostgres, SQL: "UPDATE bench.stock SET quantity = quantity - 1 WHERE product_id = $1", Exec: pgConcurrentUpdates},
-			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: "UPDATE stock SET quantity = quantity - 1 WHERE product_id = $1", Exec: duckConcurrentUpdates},
+			{Key: KeyPostgres, Label: "Postgres (bench schema)", SQL: sqlPGUpdate, Exec: pgConcurrentUpdates},
+			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: sqlDuckUpdate, Exec: duckConcurrentUpdates},
 		},
 	},
 	{
@@ -362,7 +392,7 @@ LIMIT 10`},
 		Why: "Big batches are what DuckDB writes best: columnar appends, compressed as they go, on all cores. " +
 			"So the rule is not 'DuckDB is bad at writes', it is 'DuckDB is bad at MANY SMALL writes'.",
 		Variants: []Variant{
-			{Key: KeyPostgres, SQL: "INSERT INTO bench.bulk SELECT g, g % 30000, (g % 5) + 1, now() FROM generate_series(1, 5000000) AS g", Exec: pgBulkInsert},
+			{Key: KeyPostgres, Label: "Postgres (bench schema)", SQL: "INSERT INTO bench.bulk SELECT g, g % 30000, (g % 5) + 1, now() FROM generate_series(1, 5000000) AS g", Exec: pgBulkInsert},
 			{Key: KeyDuckDBRaw, Label: "DuckDB (scratch file)", SQL: "INSERT INTO bulk SELECT i, i % 30000, (i % 5) + 1, now() FROM range(1, 5000001) AS t(i)", Exec: duckBulkInsert},
 		},
 	},

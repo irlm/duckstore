@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/irlm/duckstore/internal/query"
@@ -233,7 +234,6 @@ func randomCustomerID(ctx context.Context, env Env) ([]any, error) {
 // --- write scenarios ---------------------------------------------------------------
 
 const (
-	writeOps     = 2000
 	stockRows    = 30000
 	hotRows      = 16
 	writers      = 8
@@ -284,76 +284,116 @@ var (
 	duckStockDDL  = []string{"CREATE TABLE stock (product_id BIGINT PRIMARY KEY, quantity INTEGER NOT NULL)", fmt.Sprintf("INSERT INTO stock SELECT i, 1000000 FROM range(1, %d) t(i)", stockRows+1), "CHECKPOINT"}
 )
 
-func pgSingleInserts(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
-	if err := pgSetup(ctx, env, pgEventsDDL...); err != nil {
-		return 0, 0, 0, err
-	}
-	start := time.Now()
-	for i := range writeOps {
-		if _, err := env.PG.Exec(ctx, q, int64(i+1), rand.Int64N(stockRows)+1, int32(1+rand.IntN(3))); err != nil {
-			return 0, 0, 0, err
-		}
-	}
-	return time.Since(start), writeOps, 0, nil
+type execFunc = func(ctx context.Context, env Env, q string) (time.Duration, int, int, error)
+
+func insertArgs(i int) []any {
+	return []any{int64(i + 1), rand.Int64N(stockRows) + 1, int32(1 + rand.IntN(3))}
 }
 
-func duckSingleInserts(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
-	db, done, err := scratch(env)
-	if err != nil {
-		return 0, 0, 0, err
+func updateArgs(int) []any { return []any{rand.Int64N(stockRows) + 1} }
+
+// pgLoop runs n statements, each in its own transaction or all in one.
+func pgLoop(ctx context.Context, env Env, q string, n int, oneTx bool, args func(int) []any) (time.Duration, error) {
+	start := time.Now()
+	if !oneTx {
+		for i := range n {
+			if _, err := env.PG.Exec(ctx, q, args(i)...); err != nil {
+				return 0, err
+			}
+		}
+		return time.Since(start), nil
 	}
-	defer done()
-	if err := duckSetup(ctx, db, duckEventsDDL...); err != nil {
-		return 0, 0, 0, err
+	err := pgx.BeginFunc(ctx, env.PG, func(tx pgx.Tx) error {
+		for i := range n {
+			if _, err := tx.Exec(ctx, q, args(i)...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return time.Since(start), err
+}
+
+// duckLoop runs n prepared statements, each in its own transaction or all in one.
+func duckLoop(ctx context.Context, db *sql.DB, q string, n int, oneTx bool, args func(int) []any) (time.Duration, error) {
+	start := time.Now()
+	var tx *sql.Tx
+	var stmt *sql.Stmt
+	var err error
+	if oneTx {
+		if tx, err = db.BeginTx(ctx, nil); err != nil {
+			return 0, err
+		}
+		defer tx.Rollback()
+		stmt, err = tx.PrepareContext(ctx, q)
+	} else {
+		stmt, err = db.PrepareContext(ctx, q)
 	}
-	stmt, err := db.PrepareContext(ctx, q)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, err
 	}
 	defer stmt.Close()
-	start := time.Now()
-	for i := range writeOps {
-		if _, err := stmt.ExecContext(ctx, int64(i+1), rand.Int64N(stockRows)+1, int32(1+rand.IntN(3))); err != nil {
-			return 0, 0, 0, err
+	for i := range n {
+		if _, err := stmt.ExecContext(ctx, args(i)...); err != nil {
+			return 0, err
 		}
 	}
-	return time.Since(start), writeOps, 0, nil
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	return time.Since(start), nil
 }
 
-func pgSingleUpdates(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
-	if err := pgSetup(ctx, env, pgStockDDL...); err != nil {
-		return 0, 0, 0, err
-	}
-	start := time.Now()
-	for range writeOps {
-		if _, err := env.PG.Exec(ctx, q, rand.Int64N(stockRows)+1); err != nil {
+func pgInserts(n int, oneTx bool) execFunc {
+	return func(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
+		if err := pgSetup(ctx, env, pgEventsDDL...); err != nil {
 			return 0, 0, 0, err
 		}
+		d, err := pgLoop(ctx, env, q, n, oneTx, insertArgs)
+		return d, n, 0, err
 	}
-	return time.Since(start), writeOps, 0, nil
 }
 
-func duckSingleUpdates(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
-	db, done, err := scratch(env)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer done()
-	if err := duckSetup(ctx, db, duckStockDDL...); err != nil {
-		return 0, 0, 0, err
-	}
-	stmt, err := db.PrepareContext(ctx, q)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer stmt.Close()
-	start := time.Now()
-	for range writeOps {
-		if _, err := stmt.ExecContext(ctx, rand.Int64N(stockRows)+1); err != nil {
+func duckInserts(n int, oneTx bool) execFunc {
+	return func(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
+		db, done, err := scratch(env)
+		if err != nil {
 			return 0, 0, 0, err
 		}
+		defer done()
+		if err := duckSetup(ctx, db, duckEventsDDL...); err != nil {
+			return 0, 0, 0, err
+		}
+		d, err := duckLoop(ctx, db, q, n, oneTx, insertArgs)
+		return d, n, 0, err
 	}
-	return time.Since(start), writeOps, 0, nil
+}
+
+func pgUpdates(n int, oneTx bool) execFunc {
+	return func(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
+		if err := pgSetup(ctx, env, pgStockDDL...); err != nil {
+			return 0, 0, 0, err
+		}
+		d, err := pgLoop(ctx, env, q, n, oneTx, updateArgs)
+		return d, n, 0, err
+	}
+}
+
+func duckUpdates(n int, oneTx bool) execFunc {
+	return func(ctx context.Context, env Env, q string) (time.Duration, int, int, error) {
+		db, done, err := scratch(env)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		defer done()
+		if err := duckSetup(ctx, db, duckStockDDL...); err != nil {
+			return 0, 0, 0, err
+		}
+		d, err := duckLoop(ctx, db, q, n, oneTx, updateArgs)
+		return d, n, 0, err
+	}
 }
 
 // concurrent runs `writers` goroutines doing `opsPerWriter` updates each on a
