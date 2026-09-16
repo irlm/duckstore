@@ -10,7 +10,7 @@ WITH fx_daily AS MATERIALIZED (
     FROM store.currencies c
     CROSS JOIN generate_series((SELECT min(placed_at)::date FROM store.orders),
                                (SELECT max(placed_at)::date FROM store.orders),
-                               interval '1 day') AS d
+                               interval '1 day') AS g(d)
 )
 SELECT oi.order_id, oi.line_no, o.placed_at, o.customer_id, oi.product_id, p.name AS product_name,
        oi.quantity, o.currency_code, oi.unit_price AS unit_price_local,

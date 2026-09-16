@@ -10,7 +10,7 @@ WITH fx_daily AS MATERIALIZED (
     FROM store.currencies c
     CROSS JOIN generate_series((SELECT min(placed_at)::date FROM store.orders),
                                (SELECT max(placed_at)::date FROM store.orders),
-                               interval '1 day') AS d
+                               interval '1 day') AS g(d)
 ),
 spend AS (
     SELECT o.customer_id, sum(round(o.total / fx.units_per_usd, 2)) AS lifetime_usd

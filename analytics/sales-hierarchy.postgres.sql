@@ -3,7 +3,7 @@ WITH RECURSIVE chain AS (
     SELECT id AS employee_id, 0 AS level, ARRAY[id] AS path
     FROM store.employees WHERE manager_id IS NULL
     UNION ALL
-    SELECT e.id, c.level + 1, c.path || e.id
+    SELECT e.id, c.level + 1, c.path || ARRAY[e.id]
     FROM store.employees e JOIN chain c ON e.manager_id = c.employee_id
 ),
 fx_daily AS MATERIALIZED (
@@ -18,7 +18,7 @@ fx_daily AS MATERIALIZED (
     FROM store.currencies c
     CROSS JOIN generate_series((SELECT min(placed_at)::date FROM store.orders),
                                (SELECT max(placed_at)::date FROM store.orders),
-                               interval '1 day') AS d
+                               interval '1 day') AS g(d)
 ),
 customer_revenue AS (
     SELECT c.account_manager_id,
