@@ -43,3 +43,6 @@ app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
+
+// Makes the Program class visible to WebApplicationFactory in the test project.
+public partial class Program;

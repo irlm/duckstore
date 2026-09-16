@@ -81,6 +81,16 @@ What the numbers say:
 Most real systems use **both**, like this project: Postgres runs the store, DuckDB answers the analytics,
 and DuckDB can even read Postgres live when a question needs fresh data.
 
+## The same store in C# (ASP.NET Core)
+
+[dotnet/](dotnet/) has an ASP.NET Core app over the same databases: product CRUD on Postgres with EF Core,
+reports on DuckDB with DuckDB.NET and Dapper, a Blazor + MudBlazor UI and a REST API. Its README also answers
+**"do we need both backends?"** (short answer: no, one app with separate report endpoints is enough).
+
+```bash
+make dotnet-run     # http://127.0.0.1:5085
+```
+
 ## Quick start
 
 Requirements: Docker, Go 1.26+, a C compiler (DuckDB is linked with CGO), and internet access the first
@@ -151,6 +161,7 @@ The SQL itself is meant to be read:
 
 ```
 cmd/duckstore/          the binary: seed, etl, serve, bench, sql
+dotnet/                 the ASP.NET Core version (Blazor UI, EF Core, DuckDB.NET)
 internal/config/        settings from environment variables
 internal/pg/            Postgres connection and schema files
 internal/seed/          fake data generator (deterministic, bulk COPY)
