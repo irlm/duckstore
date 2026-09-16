@@ -4,6 +4,7 @@ using DuckStore.Web.Data;
 using DuckStore.Web.Services;
 using DuckStore.Web.Warehouse;
 using Microsoft.EntityFrameworkCore;
+using MudBlazor;
 using MudBlazor.Services;
 using Scalar.AspNetCore;
 
@@ -25,7 +26,7 @@ builder.Services.AddExceptionHandler<ErrorHandler>();
 
 // UI: Blazor (interactive server rendering) + MudBlazor components.
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
-builder.Services.AddMudServices();
+builder.Services.AddMudServices(options => options.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomRight);
 
 var app = builder.Build();
 

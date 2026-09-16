@@ -1,9 +1,70 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
 
-@Body
+<MudThemeProvider @ref="_themeProvider" Theme="_theme" @bind-IsDarkMode="_isDark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense>
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawerOpen = !_drawerOpen" aria-label="Toggle menu" />
+        <MudText Typo="Typo.h6" Class="ml-2">DuckStore</MudText>
+        <MudText Typo="Typo.body2" Class="ml-3 d-none d-sm-flex" Style="opacity: .8">ASP.NET Core · Postgres + DuckDB</MudText>
+        <MudSpacer />
+        <MudIconButton Icon="@(_isDark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit"
+                       OnClick="() => _isDark = !_isDark" aria-label="Toggle dark mode" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Variant="DrawerVariant.Responsive">
+        <MudNavMenu Class="mt-2">
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
+            <MudNavLink Href="/products" Icon="@Icons.Material.Filled.Inventory2">
+                Products <MudText Typo="Typo.caption" Inline Class="ml-1" Style="opacity: .7">Postgres</MudText>
+            </MudNavLink>
+            <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Insights">
+                Reports <MudText Typo="Typo.caption" Inline Class="ml-1" Style="opacity: .7">DuckDB</MudText>
+            </MudNavLink>
+            <MudDivider Class="my-2" />
+            <MudNavLink Href="/scalar" Target="_blank" Icon="@Icons.Material.Filled.Api">API reference</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private MudThemeProvider _themeProvider = default!;
+    private bool _drawerOpen = true;
+    private bool _isDark;
+
+    // Blue #2a78d6 is the same "Postgres" color as the Go app; orange #eb6834 is "DuckDB".
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight { Primary = "#2a78d6", Secondary = "#eb6834", AppbarBackground = "#1c5cab" },
+        PaletteDark = new PaletteDark { Primary = "#3987e5", Secondary = "#d95926", AppbarBackground = "#1a1a19", Surface = "#1a1a19", Background = "#0d0d0d", DrawerBackground = "#141413" },
+        LayoutProperties = new LayoutProperties { DefaultBorderRadius = "8px" },
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _isDark = await _themeProvider.GetSystemDarkModeAsync();
+            await _themeProvider.WatchSystemDarkModeAsync(dark => { _isDark = dark; return InvokeAsync(StateHasChanged); });
+            StateHasChanged();
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

@@ -1,0 +1,308 @@
+@page "/reports"
+@using System.Globalization
+@inject ReportService ReportService
+
+<PageTitle>Reports</PageTitle>
+
+<MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+    <MudText Typo="Typo.h4">Reports</MudText>
+    <EngineChip Engine="DuckDB" Detail="Dapper" />
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAllAsync" Disabled="_loading">Refresh</MudButton>
+</MudStack>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Warning">@_error</MudAlert>
+    return;
+}
+
+@if (_status is not null)
+{
+    <MudText Typo="Typo.body2" Class="mb-4" Style="opacity: .8">
+        Warehouse built @_status.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC, orders up to #@_status.MaxOrderId.ToString("N0").
+        Postgres has @_status.OrdersSinceEtl.ToString("N0") newer orders (checked live with a Postgres query).
+        All @_sections report queries below ran in parallel in @_totalMs.ToString("N0") ms.
+    </MudText>
+}
+
+@* ---- KPIs ---- *@
+<div class="kpi-grid">
+    @if (_kpis is null)
+    {
+        @for (var i = 0; i < 5; i++)
+        {
+            <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="104px" />
+        }
+    }
+    else
+    {
+        @foreach (var tile in KpiTiles())
+        {
+            <MudPaper Outlined Class="pa-4">
+                <MudText Typo="Typo.body2">@tile.Label</MudText>
+                <MudText Typo="Typo.h5" Style="font-weight: 600">@tile.Value</MudText>
+                @if (tile.Delta is not null)
+                {
+                    <MudText Typo="Typo.caption" Color="@(tile.Delta >= 0 ? Color.Success : Color.Error)">
+                        @(tile.Delta >= 0 ? "▲" : "▼") @tile.Delta.Value.ToString("+0.0;-0.0")% vs previous 30 days
+                    </MudText>
+                }
+            </MudPaper>
+        }
+    }
+</div>
+@if (_kpis is not null)
+{
+    <SqlPanel Sql="@_kpis.Sql" ElapsedMs="_kpis.ElapsedMs" />
+}
+
+<MudGrid Spacing="3" Class="mt-2">
+    @* ---- Monthly revenue ---- *@
+    <MudItem xs="12">
+        <MudPaper Outlined Class="pa-4">
+            <MudText Typo="Typo.h6">Revenue per month (USD millions)</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .75">Every order line, already converted to USD by the ETL. The first and last months are partial.</MudText>
+            @if (_monthly is null)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="300px" />
+            }
+            else
+            {
+                <MudChart T="double" ChartType="ChartType.Bar" ChartSeries="_monthlySeries" ChartLabels="_monthlyLabels"
+                          ChartOptions="_barOptions" Width="100%" Height="320px" />
+                <SqlPanel Sql="@_monthly.Sql" ElapsedMs="_monthly.ElapsedMs" />
+            }
+        </MudPaper>
+    </MudItem>
+
+    @* ---- Top products ---- *@
+    <MudItem xs="12" lg="7">
+        <MudPaper Outlined Class="pa-4" Style="height: 100%">
+            <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudText Typo="Typo.h6">Top 10 products</MudText>
+                <MudSpacer />
+                <MudToggleGroup T="int" Value="_days" ValueChanged="OnDaysChangedAsync" Size="Size.Small" Color="Color.Secondary" Outlined Style="width: 300px">
+                    <MudToggleItem Value="30" Text="30 days" />
+                    <MudToggleItem Value="90" Text="90 days" />
+                    <MudToggleItem Value="365" Text="1 year" />
+                </MudToggleGroup>
+            </MudStack>
+            @if (_top is null)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="360px" Class="mt-3" />
+            }
+            else
+            {
+                var max = _top.Rows.Count == 0 ? 1 : _top.Rows.Max(r => r.RevenueUsd);
+                <MudSimpleTable Dense Elevation="0" Class="mt-2">
+                    <thead><tr><th>#</th><th>Product</th><th class="num">Units</th><th class="num">Revenue (USD)</th><th style="width: 18%"></th></tr></thead>
+                    <tbody>
+                        @foreach (var (row, i) in _top.Rows.Select((r, i) => (r, i)))
+                        {
+                            <tr>
+                                <td>@(i + 1)</td>
+                                <td>@row.ProductName<br /><MudText Typo="Typo.caption">@row.Brand · @row.Department</MudText></td>
+                                <td class="num">@row.Units.ToString("N0")</td>
+                                <td class="num">@row.RevenueUsd.ToString("N0")</td>
+                                <td><MudProgressLinear Color="Color.Primary" Value="@((double)(row.RevenueUsd / max * 100))" Rounded Size="Size.Medium" /></td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <SqlPanel Sql="@_top.Sql" ElapsedMs="_top.ElapsedMs" />
+            }
+        </MudPaper>
+    </MudItem>
+
+    @* ---- Return rates ---- *@
+    <MudItem xs="12" lg="5">
+        <MudPaper Outlined Class="pa-4" Style="height: 100%">
+            <MudText Typo="Typo.h6">Highest return rates</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .75">Units returned / units sold, with the most common reason (<code>mode()</code>).</MudText>
+            @if (_returns is null)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="360px" />
+            }
+            else
+            {
+                var max = _returns.Rows.Count == 0 ? 1 : _returns.Rows.Max(r => r.ReturnRatePct);
+                <MudSimpleTable Dense Elevation="0">
+                    <thead><tr><th>Category</th><th class="num">Rate</th><th style="width: 25%"></th><th class="nowrap">Top reason</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in _returns.Rows)
+                        {
+                            <tr>
+                                <td>@row.Category<br /><MudText Typo="Typo.caption">@row.Department</MudText></td>
+                                <td class="num">@row.ReturnRatePct.ToString("N1")%</td>
+                                <td><MudProgressLinear Color="Color.Primary" Value="@(row.ReturnRatePct / max * 100)" Rounded Size="Size.Medium" /></td>
+                                <td class="nowrap">@row.TopReason?.Replace('_', ' ')</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <SqlPanel Sql="@_returns.Sql" ElapsedMs="_returns.ElapsedMs" />
+            }
+        </MudPaper>
+    </MudItem>
+
+    @* ---- PIVOT ---- *@
+    <MudItem xs="12" lg="6">
+        <MudPaper Outlined Class="pa-4" Style="height: 100%">
+            <MudText Typo="Typo.h6">Revenue by department and year (USD millions)</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .75">
+                DuckDB's <code>PIVOT</code> creates one column per year without listing them, so the C# code reads the column names at run time.
+            </MudText>
+            @if (_pivot is null)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="300px" />
+            }
+            else
+            {
+                <MudSimpleTable Dense Elevation="0" Striped>
+                    <thead>
+                        <tr>
+                            @foreach (var (column, i) in _pivot.Columns.Select((c, i) => (c, i)))
+                            {
+                                <th class="@(i > 0 ? "num" : "")">@column</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _pivot.Rows)
+                        {
+                            <tr>
+                                @foreach (var (value, i) in row.Select((v, i) => (v, i)))
+                                {
+                                    <td class="@(i > 0 ? "num" : "")">@(value is IFormattable f ? f.ToString("N2", CultureInfo.CurrentCulture) : value)</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <SqlPanel Sql="@_pivot.Sql" ElapsedMs="_pivot.ElapsedMs" />
+            }
+        </MudPaper>
+    </MudItem>
+
+    @* ---- Countries ---- *@
+    <MudItem xs="12" lg="6">
+        <MudPaper Outlined Class="pa-4" Style="height: 100%">
+            <MudText Typo="Typo.h6">Sales by country</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .75">Orders joined to the customer dimension; share of total revenue.</MudText>
+            @if (_countries is null)
+            {
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="300px" />
+            }
+            else
+            {
+                var total = _countries.Rows.Sum(r => r.RevenueUsd);
+                <MudSimpleTable Dense Elevation="0">
+                    <thead><tr><th>Country</th><th>Region</th><th class="num">Customers</th><th class="num">Revenue (USD)</th><th class="num">Share</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in _countries.Rows)
+                        {
+                            <tr>
+                                <td>@row.Country</td>
+                                <td>@row.Region</td>
+                                <td class="num">@row.Customers.ToString("N0")</td>
+                                <td class="num">@row.RevenueUsd.ToString("N0")</td>
+                                <td class="num">@((row.RevenueUsd / total).ToString("P1"))</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <SqlPanel Sql="@_countries.Sql" ElapsedMs="_countries.ElapsedMs" />
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private WarehouseStatus? _status;
+    private Report<KpiPeriod>? _kpis;
+    private Report<MonthlyRevenue>? _monthly;
+    private Report<TopProduct>? _top;
+    private Report<ReturnRate>? _returns;
+    private Report<CountrySales>? _countries;
+    private TableReport? _pivot;
+    private string? _error;
+    private bool _loading;
+    private int _days = 90;
+    private double _totalMs;
+    private int _sections;
+
+    private List<ChartSeries<double>> _monthlySeries = [];
+    private string[] _monthlyLabels = [];
+
+    // One series, one color (the "Postgres/primary" blue); no legend needed for a single series.
+    private readonly BarChartOptions _barOptions = new()
+    {
+        ChartPalette = ["#2a78d6"],
+        ShowLegend = false,
+        YAxisTicks = 5,
+        YAxisToStringFunc = v => $"${v:0.#}M",
+    };
+
+    protected override Task OnInitializedAsync() => LoadAllAsync();
+
+    private async Task LoadAllAsync()
+    {
+        _loading = true;
+        _error = null;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            // Each report gets its own DuckDB connection, so they can run at the same time.
+            var status = ReportService.StatusAsync();
+            var kpis = ReportService.KpisAsync();
+            var monthly = ReportService.MonthlyRevenueAsync();
+            var top = ReportService.TopProductsAsync(_days);
+            var returns = ReportService.ReturnRatesAsync();
+            var countries = ReportService.SalesByCountryAsync();
+            var pivot = ReportService.RevenueByDepartmentAndYearAsync();
+            await Task.WhenAll(status, kpis, monthly, top, returns, countries, pivot);
+
+            (_status, _kpis, _monthly, _top, _returns, _countries, _pivot) =
+                (status.Result, kpis.Result, monthly.Result, top.Result, returns.Result, countries.Result, pivot.Result);
+            _sections = 7;
+            _totalMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+
+            _monthlySeries = [new ChartSeries<double> { Name = "Revenue (USD millions)", Data = _monthly.Rows.Select(r => (double)r.RevenueUsd / 1e6).ToArray() }];
+            _monthlyLabels = _monthly.Rows.Select((r, i) => r.Month.Month == 1 || i == 0 ? r.Month.ToString("MMM yyyy") : "").ToArray();
+        }
+        catch (WarehouseNotBuiltException e)
+        {
+            _error = e.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnDaysChangedAsync(int days)
+    {
+        _days = days;
+        _top = null;
+        _top = await ReportService.TopProductsAsync(days);
+    }
+
+    private sealed record Tile(string Label, string Value, double? Delta);
+
+    private IEnumerable<Tile> KpiTiles()
+    {
+        var current = _kpis!.Rows.FirstOrDefault(r => r.Period == "current");
+        var previous = _kpis.Rows.FirstOrDefault(r => r.Period == "previous");
+        if (current is null)
+        {
+            yield break;
+        }
+        double? Change(decimal now, decimal? before) => before is > 0 ? (double)((now - before.Value) / before.Value * 100) : null;
+        yield return new("Revenue", $"${current.RevenueUsd / 1_000_000m:N1}M", Change(current.RevenueUsd, previous?.RevenueUsd));
+        yield return new("Orders", current.Orders.ToString("N0"), Change(current.Orders, previous?.Orders));
+        yield return new("Average order", $"${current.AvgOrderUsd:N2}", Change(current.AvgOrderUsd, previous?.AvgOrderUsd));
+        yield return new("New customers", current.NewCustomers.ToString("N0"), Change(current.NewCustomers, previous?.NewCustomers));
+        yield return new("Active customers", current.ActiveCustomers.ToString("N0"), Change(current.ActiveCustomers, previous?.ActiveCustomers));
+    }
+}

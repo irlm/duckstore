@@ -1,0 +1,10 @@
+@* A small label that says which database answered. *@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ma-0"
+         Icon="@Icons.Material.Filled.Storage" IconColor="@(Engine == "DuckDB" ? Color.Secondary : Color.Primary)">
+    @Engine@(string.IsNullOrEmpty(Detail) ? "" : " · " + Detail)
+</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public string Engine { get; set; } = "";
+    [Parameter] public string? Detail { get; set; }
+}

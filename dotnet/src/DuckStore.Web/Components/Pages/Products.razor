@@ -1,0 +1,140 @@
+@page "/products"
+@inject ProductService ProductService
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Products</PageTitle>
+
+<MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-4">
+    <MudText Typo="Typo.h4">Products</MudText>
+    <EngineChip Engine="Postgres" Detail="EF Core" />
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="CreateAsync">New product</MudButton>
+</MudStack>
+
+<MudDataGrid @ref="_grid" T="ProductListItem" ServerData="LoadAsync" RowsPerPage="20" Hover Dense
+             SortMode="SortMode.Single" Filterable="false" Elevation="0" Outlined>
+    <ToolBarContent>
+        <MudTextField T="string" Value="_search" ValueChanged="OnSearchAsync" Placeholder="Search name or SKU"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium"
+                      Immediate DebounceInterval="350" Clearable Class="mt-0" Style="max-width: 360px" />
+        <MudSpacer />
+        <MudSwitch T="bool" Value="_onlyActive" ValueChanged="OnOnlyActiveAsync" Color="Color.Primary" Label="Only active" />
+    </ToolBarContent>
+    <Columns>
+        <PropertyColumn Property="x => x.Id" Title="ID" />
+        <PropertyColumn Property="x => x.Sku" Title="SKU" Sortable="false" />
+        <PropertyColumn Property="x => x.Name" />
+        <PropertyColumn Property="x => x.Brand" Sortable="false" />
+        <PropertyColumn Property="x => x.Category" Sortable="false" />
+        <PropertyColumn Property="x => x.PriceUsd" Title="Price (USD)" Format="N2" HeaderClass="num" CellClass="num" />
+        <TemplateColumn Title="Active" Sortable="false">
+            <CellTemplate>
+                @if (context.Item.IsActive)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" Title="Active" />
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption">inactive</MudText>
+                }
+            </CellTemplate>
+        </TemplateColumn>
+        <TemplateColumn Sortable="false" CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" aria-label="Edit" OnClick="() => EditAsync(context.Item.Id)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" aria-label="Delete" OnClick="() => DeleteAsync(context.Item)" />
+            </CellTemplate>
+        </TemplateColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="ProductListItem" PageSizeOptions="new[] { 10, 20, 50, 100 }" />
+    </PagerContent>
+</MudDataGrid>
+
+<MudText Typo="Typo.body2" Class="mt-3" Style="opacity: .75">
+    Each page of the grid is one query with <code>LIMIT/OFFSET</code> plus a <code>count(*)</code>. Search uses
+    <code>ILIKE '%text%'</code>, which the trigram index on <code>products.name</code> can serve.
+    Run with <code>dotnet run</code> to see the SQL that EF Core generates in the terminal.
+</MudText>
+
+@code {
+    private MudDataGrid<ProductListItem> _grid = default!;
+    private string? _search;
+    private bool _onlyActive;
+
+    private async Task<GridData<ProductListItem>> LoadAsync(GridState<ProductListItem> state, CancellationToken ct)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        var sortBy = sort?.SortBy switch
+        {
+            nameof(ProductListItem.Name) => "name",
+            nameof(ProductListItem.PriceUsd) => "price",
+            _ => "id",
+        };
+        var result = await ProductService.ListAsync(
+            new ProductQuery(_search, state.Page + 1, state.PageSize, sortBy, sort?.Descending ?? false, _onlyActive), ct);
+        return new GridData<ProductListItem> { Items = result.Items, TotalItems = result.Total };
+    }
+
+    private Task OnSearchAsync(string? text)
+    {
+        _search = text;
+        return _grid.ReloadServerData();
+    }
+
+    private Task OnOnlyActiveAsync(bool value)
+    {
+        _onlyActive = value;
+        return _grid.ReloadServerData();
+    }
+
+    private async Task CreateAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<ProductDialog>("New product", DialogOptions);
+        if (await dialog.GetReturnValueAsync<ProductDetail>() is { } created)
+        {
+            Snackbar.Add($"Created {created.Name} (#{created.Id}).", Severity.Success);
+            await _grid.ReloadServerData();
+        }
+    }
+
+    private async Task EditAsync(long id)
+    {
+        var parameters = new DialogParameters<ProductDialog> { { d => d.ProductId, id } };
+        var dialog = await Dialogs.ShowAsync<ProductDialog>($"Edit product #{id}", parameters, DialogOptions);
+        if (await dialog.GetReturnValueAsync<ProductDetail>() is { } saved)
+        {
+            Snackbar.Add($"Saved {saved.Name}.", Severity.Success);
+            await _grid.ReloadServerData();
+        }
+    }
+
+    private async Task DeleteAsync(ProductListItem item)
+    {
+        var confirm = await Dialogs.ShowMessageBoxAsync("Delete product",
+            $"Delete {item.Name} ({item.Sku})? Products that were sold cannot be deleted; deactivate them instead.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true)
+        {
+            return;
+        }
+        try
+        {
+            await ProductService.DeleteAsync(item.Id);
+            Snackbar.Add($"Deleted {item.Name}.", Severity.Success);
+            await _grid.ReloadServerData();
+        }
+        catch (ConflictException e)
+        {
+            Snackbar.Add(e.Message, Severity.Warning);
+        }
+        catch (NotFoundException e)
+        {
+            Snackbar.Add(e.Message, Severity.Error);
+            await _grid.ReloadServerData();
+        }
+    }
+
+    private static readonly DialogOptions DialogOptions = new() { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true };
+}

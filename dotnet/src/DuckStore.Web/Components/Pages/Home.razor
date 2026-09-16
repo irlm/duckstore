@@ -1,7 +1,100 @@
-﻿@page "/"
+@page "/"
+@inject ProductService ProductService
+@inject ReportService ReportService
 
-<PageTitle>Home</PageTitle>
+<PageTitle>DuckStore</PageTitle>
 
-<h1>Hello, world!</h1>
+<MudText Typo="Typo.h4" GutterBottom>One ASP.NET Core app, two databases</MudText>
+<MudText Typo="Typo.body1" Class="mb-6" Style="max-width: 75ch">
+    The same store as the Go project, from C#. Product screens read and write <b>Postgres</b> with EF Core (OLTP).
+    Report screens query the <b>DuckDB</b> warehouse with Dapper and plain SQL (OLAP). DuckDB is a library, so it runs
+    inside this process, next to the Postgres connection pool.
+</MudText>
 
-Welcome to your new app.
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-5" Outlined Style="height: 100%">
+            <MudStack Row AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.h6">Products</MudText>
+                <MudSpacer />
+                <EngineChip Engine="Postgres" Detail="EF Core" />
+            </MudStack>
+            @if (_productCount is null)
+            {
+                <MudProgressLinear Indeterminate Color="Color.Primary" />
+            }
+            else
+            {
+                <MudText Typo="Typo.h3">@_productCount.Value.ToString("N0")</MudText>
+                <MudText Typo="Typo.body2" Class="mb-4">products. Create, edit, change prices and delete, in short transactions.</MudText>
+            }
+            <MudButton Href="/products" Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward">Manage products</MudButton>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-5" Outlined Style="height: 100%">
+            <MudStack Row AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.h6">Reports</MudText>
+                <MudSpacer />
+                <EngineChip Engine="DuckDB" Detail="Dapper" />
+            </MudStack>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mb-4">@_error</MudAlert>
+            }
+            else if (_status is null)
+            {
+                <MudProgressLinear Indeterminate Color="Color.Secondary" />
+            }
+            else
+            {
+                <MudText Typo="Typo.h3">@_status.MaxOrderId.ToString("N0")</MudText>
+                <MudText Typo="Typo.body2" Class="mb-4">
+                    is the last order id in the warehouse, built @_status.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC.
+                    @if (_status.OrdersSinceEtl > 0)
+                    {
+                        <b>@_status.OrdersSinceEtl.ToString("N0") newer orders</b> <span>are only in Postgres until the next <code>make etl</code>.</span>
+                    }
+                    else
+                    {
+                        <span>Postgres has no newer orders.</span>
+                    }
+                </MudText>
+            }
+            <MudButton Href="/reports" Variant="Variant.Filled" Color="Color.Secondary" EndIcon="@Icons.Material.Filled.ArrowForward">Open reports</MudButton>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+<MudPaper Class="pa-5 mt-6" Outlined>
+    <MudText Typo="Typo.h6" GutterBottom>How the request flows</MudText>
+    <MudSimpleTable Dense Elevation="0">
+        <thead><tr><th>Screen</th><th>Code</th><th>Database</th><th>Why this database</th></tr></thead>
+        <tbody>
+            <tr><td>Products</td><td>ProductService → EF Core</td><td>Postgres</td><td>Few rows by key, concurrent writes, constraints, transactions</td></tr>
+            <tr><td>Reports</td><td>ReportService → Dapper → DuckDB.NET</td><td>DuckDB file</td><td>Millions of rows scanned and aggregated, read-only</td></tr>
+            <tr><td>REST API (/api/…)</td><td>Minimal APIs over the same services</td><td>Both</td><td>Same code for the UI and for other clients</td></tr>
+            <tr><td>Warehouse refresh</td><td>Go ETL (<code>make etl</code>)</td><td>Postgres → DuckDB</td><td>A batch job; this app reopens the new file on its own</td></tr>
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+@code {
+    private int? _productCount;
+    private WarehouseStatus? _status;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var products = ProductService.ListAsync(new ProductQuery(PageSize: 1));
+        try
+        {
+            _status = await ReportService.StatusAsync();
+        }
+        catch (WarehouseNotBuiltException e)
+        {
+            _error = e.Message;
+        }
+        _productCount = (await products).Total;
+    }
+}

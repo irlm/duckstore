@@ -1,0 +1,148 @@
+@inject ProductService ProductService
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" Class="my-6" />
+        }
+        else
+        {
+            @if (_errors.Count > 0)
+            {
+                <MudAlert Severity="Severity.Error" Class="mb-4">
+                    @foreach (var error in _errors)
+                    {
+                        <div>@error</div>
+                    }
+                </MudAlert>
+            }
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_input.Sku" Label="SKU" Required MaxLength="40" HelperText="Unique, for example BOO-000123" />
+                </MudItem>
+                <MudItem xs="12" sm="8">
+                    <MudTextField @bind-Value="_input.Name" Label="Name" Required MaxLength="200" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="long" @bind-Value="_input.BrandId" Label="Brand" Required AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var brand in _brands)
+                        {
+                            <MudSelectItem T="long" Value="brand.Id">@brand.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="long" @bind-Value="_input.CategoryId" Label="Category" Required AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var category in _categories)
+                        {
+                            <MudSelectItem T="long" Value="category.Id">@category.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_input.PriceUsd" Label="Price (USD)" Min="0.01m" Format="N2" Step="1m"
+                                     HelperText="@(_detail is null ? null : "A new price creates a new price version")" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_input.CostUsd" Label="Cost (USD)" Min="0.01m" Format="N2" Step="1m" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_input.WeightKg" Label="Weight (kg)" Min="0m" Format="N3" Step="0.1m" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_input.Description" Label="Description" Lines="2" MaxLines="5" />
+                </MudItem>
+                <MudItem xs="12" sm="8">
+                    <MudTextField @bind-Value="_input.AttributesJson" Label="Attributes (JSON, stored as jsonb)" Lines="2"
+                                  Style="font-family: ui-monospace, monospace" />
+                </MudItem>
+                <MudItem xs="12" sm="4" Class="d-flex align-center">
+                    <MudSwitch @bind-Value="_input.IsActive" Color="Color.Primary" Label="Active" />
+                </MudItem>
+            </MudGrid>
+
+            @if (_detail is not null)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-6 mb-1">Price history (table product_prices)</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .75">
+                    Sold in @_detail.OrderLines.ToString("N0") order lines. After the next ETL, each version becomes a row
+                    in <code>dw.dim_product</code> (SCD Type 2), and old sales keep their old price.
+                </MudText>
+                <MudSimpleTable Dense Elevation="0" Striped>
+                    <thead><tr><th>Valid from (UTC)</th><th>Valid to (UTC)</th><th class="num">Price (USD)</th></tr></thead>
+                    <tbody>
+                        @foreach (var version in _detail.PriceHistory)
+                        {
+                            <tr>
+                                <td>@version.ValidFrom.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@(version.ValidTo?.ToString("yyyy-MM-dd HH:mm") ?? "current")</td>
+                                <td class="num">@version.PriceUsd.ToString("N2")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAsync" Disabled="_loading || _saving">
+            @(_saving ? "Saving…" : "Save")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>Null to create a new product.</summary>
+    [Parameter] public long? ProductId { get; set; }
+
+    private ProductInput _input = new() { AttributesJson = "{}" };
+    private ProductDetail? _detail;
+    private List<LookupItem> _brands = [];
+    private List<LookupItem> _categories = [];
+    private List<string> _errors = [];
+    private bool _loading = true;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var brands = ProductService.BrandsAsync();
+        var categories = ProductService.CategoriesAsync();
+        if (ProductId is long id)
+        {
+            _detail = await ProductService.GetAsync(id);
+            _input = ProductInput.From(_detail);
+        }
+        _brands = await brands;
+        _categories = await categories;
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _errors.Clear();
+        try
+        {
+            var saved = ProductId is long id
+                ? await ProductService.UpdateAsync(id, _input)
+                : await ProductService.CreateAsync(_input);
+            Dialog.Close(DialogResult.Ok(saved));
+        }
+        catch (InputException e)
+        {
+            _errors = e.Errors.Select(x => x.ErrorMessage ?? "Invalid value.").ToList();
+        }
+        catch (Exception e) when (e is ConflictException or NotFoundException)
+        {
+            _errors = [e.Message];
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

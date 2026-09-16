@@ -1,0 +1,17 @@
+@* Shows the SQL behind a report and how long DuckDB took. *@
+<MudStack Row AlignItems="AlignItems.Center" Class="mt-2" Spacing="2">
+    <EngineChip Engine="DuckDB" Detail="@($"{ElapsedMs:F0} ms")" />
+    <MudSpacer />
+    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Code" OnClick="() => _open = !_open">
+        @(_open ? "Hide SQL" : "Show SQL")
+    </MudButton>
+</MudStack>
+<MudCollapse Expanded="_open">
+    <pre class="sql">@Sql</pre>
+</MudCollapse>
+
+@code {
+    [Parameter, EditorRequired] public string Sql { get; set; } = "";
+    [Parameter] public double ElapsedMs { get; set; }
+    private bool _open;
+}
