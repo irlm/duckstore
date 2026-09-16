@@ -5,29 +5,40 @@
         <MudText Typo="Typo.caption" Style="opacity: .75">@Path</MudText>
     </MudStack>
 
-    @if (Running)
+    @if (Progress is not null)
     {
-        <MudProgressLinear Indeterminate Color="Color.Default" Class="my-4" />
+        <MudText Typo="Typo.body2" Class="mt-3" Style="opacity: .75">@Progress</MudText>
+        <MudProgressLinear Indeterminate Color="Color.Default" Class="mb-4 mt-1" />
     }
-    else if (Run is null)
+    else if (Series is null)
     {
         <MudText Typo="Typo.body2" Class="my-3" Style="opacity: .6">Not run yet.</MudText>
     }
-    else if (Run.Error is not null)
+    else if (Series.Error is not null)
     {
-        <MudAlert Severity="Severity.Error" Dense Class="my-2">@Run.Error</MudAlert>
+        <MudAlert Severity="Severity.Error" Dense Class="my-2">@Series.Error</MudAlert>
     }
-    else
+    else if (Series.Median is { } run)
     {
         <MudStack Row AlignItems="AlignItems.Baseline" Spacing="3" Class="mt-1">
-            <MudText Typo="Typo.h5" Style="font-weight: 600">@Format.Ms(Run.TotalMs)</MudText>
+            <MudText Typo="Typo.h5" Style="font-weight: 600">@Format.Ms(run.TotalMs)</MudText>
             <MudText Typo="Typo.body2" Style="opacity: .75">
-                @Run.Result!.RowCount.ToString("N0") rows@(Run.PayloadBytes is long b ? $" · {Format.Bytes(b)} of JSON" : "")
+                @run.Result!.RowCount.ToString("N0") rows@(run.PayloadBytes is long b ? $" · {Format.Bytes(b)} of JSON" : "")
             </MudText>
         </MudStack>
-        <TimingBar Phases="Run.Phases" ScaleMs="ScaleMs" />
+        @if (Series.Runs.Count > 1)
+        {
+            <MudText Typo="Typo.caption" Style="opacity: .75" title="@AllRuns(Series)">
+                median of @Series.Runs.Count runs · fastest @Format.Ms(Series.MinMs) · slowest @Format.Ms(Series.MaxMs)@(Series.Warmups.Count > 0 ? $" · after {Series.Warmups.Count} warm-up" : "")
+            </MudText>
+        }
+        else if (Series.Warmups.Count > 0)
+        {
+            <MudText Typo="Typo.caption" Style="opacity: .75">after @Series.Warmups.Count warm-up run (@Format.Ms(Series.Warmups[0].TotalMs))</MudText>
+        }
+        <TimingBar Phases="run.Phases" ScaleMs="ScaleMs" />
         <table class="phase-table">
-            @foreach (var phase in Run.Phases)
+            @foreach (var phase in run.Phases)
             {
                 <tr>
                     <td><span class="swatch" style="background: @TimingBar.ColorFor(phase.Kind, IsDarkMode)"></span>@phase.Name</td>
@@ -41,7 +52,7 @@
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Code" OnClick="() => _showSql = !_showSql">
             @(_showSql ? "Hide SQL" : "SQL")
         </MudButton>
-        @if (Run?.Result is { RowCount: > 0 })
+        @if (Series?.Median?.Result is { RowCount: > 0 })
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.TableRows" OnClick="() => _showRows = !_showRows">
                 @(_showRows ? "Hide rows" : "Rows")
@@ -49,7 +60,7 @@
         }
     </MudStack>
     <MudCollapse Expanded="_showSql"><pre class="sql">@Sql</pre></MudCollapse>
-    @if (_showRows && Run?.Result is { } result)
+    @if (_showRows && Series?.Median?.Result is { } result)
     {
         <div class="rows-preview">
             <MudSimpleTable Dense Elevation="0">
@@ -72,12 +83,17 @@
 @code {
     [Parameter, EditorRequired] public string Title { get; set; } = "";
     [Parameter, EditorRequired] public string Path { get; set; } = "";
-    [Parameter] public ApproachRun? Run { get; set; }
-    [Parameter] public bool Running { get; set; }
+    [Parameter] public ApproachSeries? Series { get; set; }
+
+    /// <summary>Set while running, e.g. "Run 2 of 5".</summary>
+    [Parameter] public string? Progress { get; set; }
     [Parameter] public string? Sql { get; set; }
     [Parameter] public double ScaleMs { get; set; }
     [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
 
     private bool _showSql;
     private bool _showRows;
+
+    private static string AllRuns(ApproachSeries series) =>
+        "Every run: " + string.Join(", ", series.Runs.Select(r => Format.Ms(r.TotalMs)));
 }

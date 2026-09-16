@@ -19,7 +19,37 @@ public enum PhaseKind
 public sealed record TimingPhase(string Name, double Ms, PhaseKind Kind);
 
 /// <summary>One way of answering a question, with where the time went.</summary>
-public sealed record ApproachRun(string Approach, AnalyticResult? Result, IReadOnlyList<TimingPhase> Phases, double TotalMs, long? PayloadBytes, string? Error);
+public sealed record ApproachRun(string Approach, AnalyticResult? Result, IReadOnlyList<TimingPhase> Phases, double TotalMs, long? PayloadBytes, string? Error)
+{
+    public double PhaseMs(PhaseKind kind) => Phases.Where(p => p.Kind == kind).Sum(p => p.Ms);
+}
+
+/// <summary>
+/// Repeated runs of one approach. One run can be unlucky (a cold cache, another program busy),
+/// so the page and the CLI show the median run: half of the runs were faster, half slower.
+/// </summary>
+public sealed record ApproachSeries(string Approach, IReadOnlyList<ApproachRun> Runs, IReadOnlyList<ApproachRun> Warmups)
+{
+    public string? Error => Warmups.Concat(Runs).FirstOrDefault(r => r.Error is not null)?.Error;
+
+    /// <summary>The middle run by total time (the faster of the two middle runs for an even count).</summary>
+    public ApproachRun? Median => Error is null && Runs.Count > 0 ? Runs.OrderBy(r => r.TotalMs).ElementAt((Runs.Count - 1) / 2) : null;
+
+    public double MinMs => Runs.Count > 0 ? Runs.Min(r => r.TotalMs) : 0;
+    public double MaxMs => Runs.Count > 0 ? Runs.Max(r => r.TotalMs) : 0;
+}
+
+/// <param name="Runs">Timed runs; the median of them is shown.</param>
+/// <param name="Warmups">Runs before the timed ones that are not counted: they fill caches and open connections.</param>
+public sealed record MeasureOptions(int Runs = 1, int Warmups = 0, bool Postgres = true, bool DuckDb = true);
+
+/// <summary>What is running now, for progress text such as "run 2 of 5".</summary>
+public sealed record MeasureProgress(string Approach, int Run, int Of, bool Warmup);
+
+public sealed record QuestionMeasurement(string AnalyticId, ApproachSeries? Postgres, ApproachSeries? DuckDb)
+{
+    public ResultCheck? Check => Postgres?.Median?.Result is { } a && DuckDb?.Median?.Result is { } b ? ComparisonRunner.Check(a, b) : null;
+}
 
 public sealed record ResultCheck(bool Same, string Message);
 
@@ -57,6 +87,34 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         pick.Parameters.AddWithValue("id", Math.Max(1, (long)(Random.Shared.NextDouble() * maxOrderId)));
         var customerId = await pick.ExecuteScalarAsync(ct) as long? ?? 1;
         return new ComparisonContext(maxOrderId, customerId, warehouse);
+    }
+
+    /// <summary>
+    /// Runs one question with warm-up and timed runs. The approaches take turns
+    /// (Postgres, DuckDB, Postgres, DuckDB, ...) so a slow moment on the machine
+    /// hits both of them, not only the one that happened to run at that time.
+    /// </summary>
+    public async Task<QuestionMeasurement> MeasureAsync(string id, ComparisonContext context, MeasureOptions options,
+        Action<MeasureProgress>? progress = null, CancellationToken ct = default)
+    {
+        var approaches = new List<(string Name, Func<Task<ApproachRun>> Run, List<ApproachRun> Warmups, List<ApproachRun> Runs)>();
+        if (options.Postgres) approaches.Add((PostgresApproach, () => RunPostgresAsync(id, context, ct), [], []));
+        if (options.DuckDb) approaches.Add((DuckDbApproach, () => RunDuckDbAsync(id, context, ct), [], []));
+
+        var total = options.Warmups + Math.Max(1, options.Runs);
+        for (var i = 0; i < total; i++)
+        {
+            var warmup = i < options.Warmups;
+            foreach (var (name, run, warmups, runs) in approaches)
+            {
+                if (warmups.Concat(runs).Any(r => r.Error is not null)) continue; // failed once: do not repeat
+                progress?.Invoke(new MeasureProgress(name, warmup ? i + 1 : i - options.Warmups + 1, warmup ? options.Warmups : total - options.Warmups, warmup));
+                (warmup ? warmups : runs).Add(await run());
+            }
+        }
+
+        ApproachSeries? Series(string name) => approaches.Where(a => a.Name == name).Select(a => new ApproachSeries(name, a.Runs, a.Warmups)).FirstOrDefault();
+        return new QuestionMeasurement(id, Series(PostgresApproach), Series(DuckDbApproach));
     }
 
     public async Task<ApproachRun> RunPostgresAsync(string id, ComparisonContext context, CancellationToken ct = default)
