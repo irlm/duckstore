@@ -150,8 +150,11 @@ func (g *gen) emitOrder(ctx context.Context, s *orderStreams, n *orderCounters, 
 	for l := range nLines {
 		pi := -1
 		if l == 0 && promo != nil {
-			for range 5 {
-				if cand := int(promo.products[g.rng.IntN(len(promo.products))]); g.products[cand].createdAt.Before(placed) {
+			// The first line is a product on promotion, still chosen by
+			// popularity. If none comes up, the customer does not use the code.
+			for range 20 {
+				cand := g.pickProduct(placed, month)
+				if _, ok := promo.set[int32(cand)]; ok {
 					pi = cand
 					break
 				}
