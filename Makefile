@@ -1,21 +1,21 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-etl dotnet-test
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-compare docker-logs
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
 	CGO_ENABLED=1 go build -o $(BIN) ./cmd/duckstore
 
-## up: start Postgres in Docker and wait until it is healthy
+## up: start only Postgres in Docker (for the Go app and local .NET runs)
 up:
-	docker compose up -d --wait
+	docker compose up -d --wait postgres
 
-## down: stop Postgres (data is kept in the volume)
+## down: stop all containers (data is kept in the volumes)
 down:
 	docker compose down
 
-## reset: stop Postgres and delete all data (Postgres volume + DuckDB files)
+## reset: stop all containers and delete all data (Docker volumes + local DuckDB files)
 reset:
 	docker compose down -v
 	rm -rf data
@@ -44,10 +44,37 @@ test:
 dotnet-run:
 	dotnet run --project dotnet/src/DuckStore.Web --launch-profile http
 
+## dotnet-analytics: run the analytics service (DuckDB + ETL) on http://127.0.0.1:5090
+dotnet-analytics:
+	dotnet run --project dotnet/src/DuckStore.Analytics --launch-profile http
+
 ## dotnet-etl: build the DuckDB warehouse with the C# ETL (same SQL files as `make etl`)
 dotnet-etl:
-	dotnet run --project dotnet/src/DuckStore.Web --launch-profile http -- etl
+	dotnet run --project dotnet/src/DuckStore.Analytics --launch-profile http -- etl
 
 ## dotnet-test: integration tests of the .NET app (needs `make up seed etl`)
 dotnet-test:
 	dotnet test dotnet/DuckStore.slnx
+
+## docker-up: build and start postgres, analytics and web in Docker; UI on http://127.0.0.1:5085
+docker-up:
+	docker compose up -d --build --wait
+
+## docker-seed: load fake data into the Docker Postgres (default SCALE=5, ~12.5M orders), then rebuild the warehouse
+docker-seed: SCALE = 5
+docker-seed:
+	docker compose up -d --wait postgres
+	docker compose run --rm --build seed -scale $(SCALE)
+	docker compose run --rm --build --no-deps analytics etl
+
+## docker-etl: rebuild the warehouse in the analytics volume (the running service picks up the new file)
+docker-etl:
+	docker compose run --rm --no-deps analytics etl
+
+## docker-compare: run every Compare question from the web container and print the timings
+docker-compare:
+	docker compose exec web dotnet DuckStore.Web.dll compare
+
+## docker-logs: follow the logs of the analytics and web containers
+docker-logs:
+	docker compose logs -f analytics web

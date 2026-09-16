@@ -74,29 +74,7 @@ commands:
 }
 
 func runSeed(ctx context.Context, cfg config.Config, args []string) error {
-	fs := flag.NewFlagSet("seed", flag.ExitOnError)
-	scale := fs.Float64("scale", 1, "data size: 1 = ~2.5M orders, 0.1 = ~250k orders")
-	seedVal := fs.Uint64("seed", 42, "random seed (same seed = same data)")
-	years := fs.Int("years", 3, "years of order history")
-	endStr := fs.String("end", "", "last day of history, YYYY-MM-DD (default: today)")
-	fs.Parse(args)
-
-	end := time.Now().UTC()
-	if *endStr != "" {
-		t, err := time.Parse(time.DateOnly, *endStr)
-		if err != nil {
-			return fmt.Errorf("-end: %w", err)
-		}
-		end = t
-	}
-
-	pool, err := pg.Connect(ctx, cfg.PostgresURL, nil)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-
-	return seed.Run(ctx, pool, seed.Options{Scale: *scale, Seed: *seedVal, End: end, Years: *years, Log: os.Stdout})
+	return seed.Main(ctx, cfg.PostgresURL, args, os.Stdout)
 }
 
 func runETL(ctx context.Context, cfg config.Config) error {

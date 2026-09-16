@@ -1,0 +1,9 @@
+# The build context is the repository root. Send only sources to Docker.
+.git
+bin
+data
+**/bin
+**/obj
+**/*.log
+**/*.duckdb
+**/*.duckdb.wal

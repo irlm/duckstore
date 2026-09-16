@@ -1,5 +1,16 @@
-# Postgres 18 = the store's OLTP database.
-# Port 55432 on the host so it does not clash with a local Postgres on 5432.
+# Three services on one Docker network:
+#
+#   postgres   the store's OLTP database                 127.0.0.1:55432
+#   analytics  DuckDB warehouse + ETL + analytics API    127.0.0.1:5090
+#   web        Blazor UI: CRUD, reports, Compare page    127.0.0.1:5085
+#
+# `make docker-up` starts them; `make docker-seed SCALE=5` loads data and builds
+# the warehouse. `docker compose up -d postgres` alone is enough for the Go app.
+#
+# All three share this machine's CPU and memory: the numbers on the Compare page
+# show two engines on the same hardware, not two separate servers.
+name: duckstore
+
 services:
   postgres:
     image: postgres:18
@@ -8,31 +19,34 @@ services:
       POSTGRES_USER: store
       POSTGRES_PASSWORD: store
       POSTGRES_DB: store
+    # Port 55432 on the host so it does not clash with a local Postgres on 5432.
     ports:
       - "127.0.0.1:55432:5432"
-    shm_size: 2g
-    # Reasonable settings for a laptop with ~16GB+ RAM. Parallel query is on,
-    # so the Postgres vs DuckDB comparisons are fair.
+    # Parallel query workers share memory through /dev/shm.
+    shm_size: 4g
+    # Tuned for analytics on a 16-thread laptop with 28 GB RAM that also runs a
+    # desktop, so the comparison with DuckDB is fair: a large cache and up to 8
+    # parallel workers per query. Memory settings leave room for DuckDB (6 GB).
     command:
       - postgres
       - -c
-      - shared_buffers=2GB
+      - shared_buffers=3GB
       - -c
-      - effective_cache_size=8GB
+      - effective_cache_size=10GB
       - -c
       - work_mem=128MB
       - -c
       - maintenance_work_mem=1GB
       - -c
-      - max_wal_size=8GB
+      - max_wal_size=16GB
       - -c
       - random_page_cost=1.1
       - -c
-      - max_worker_processes=16
+      - max_worker_processes=24
       - -c
-      - max_parallel_workers=8
+      - max_parallel_workers=16
       - -c
-      - max_parallel_workers_per_gather=4
+      - max_parallel_workers_per_gather=8
       - -c
       - max_parallel_maintenance_workers=4
     volumes:
@@ -43,5 +57,59 @@ services:
       timeout: 3s
       retries: 30
 
+  # Loads fake data. Not started by `up`: run `make docker-seed SCALE=5`.
+  seed:
+    build:
+      context: .
+      dockerfile: docker/seed.Dockerfile
+    image: duckstore-seed
+    profiles: [tools]
+    environment:
+      DUCKSTORE_PG_URL: postgres://store:store@postgres:5432/store?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  analytics:
+    build:
+      context: .
+      dockerfile: docker/analytics.Dockerfile
+    image: duckstore-analytics
+    container_name: duckstore-analytics
+    environment:
+      # Host=postgres: containers find each other by service name. GSS (Kerberos)
+      # encryption is off because the image has no Kerberos library to load.
+      ConnectionStrings__Store: Host=postgres;Port=5432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
+      # Postgres runs on the same machine, so DuckDB must not take 80% of the RAM.
+      Warehouse__MemoryLimit: 6GB
+      # Build the warehouse when the volume has no file yet (needs seeded data).
+      Etl__RunOnStartup: "true"
+    ports:
+      - "127.0.0.1:5090:8080"
+    volumes:
+      - warehouse:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    image: duckstore-web
+    container_name: duckstore-web
+    environment:
+      ConnectionStrings__Store: Host=postgres;Port=5432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
+      # Container to container: the service name is the host name.
+      Analytics__BaseUrl: http://analytics:8080/
+    ports:
+      - "127.0.0.1:5085:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analytics:
+        condition: service_started
+
 volumes:
   pgdata:
+  warehouse:

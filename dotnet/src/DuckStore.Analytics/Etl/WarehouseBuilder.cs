@@ -84,6 +84,11 @@ public sealed class WarehouseBuilder(WarehouseSettings settings, IConfiguration 
 
                 // Setup: UTC session, postgres extension, attach the store read-only.
                 await Run(null, "SET TimeZone = 'UTC'");
+                if (settings.MemoryLimit is { } memory)
+                {
+                    // Above the limit DuckDB spills to a .tmp folder next to the file instead of failing.
+                    await Run(null, $"SET memory_limit = {Quote(memory)}");
+                }
                 if (settings.ExtensionDirectory is { } extensions)
                 {
                     // The Docker image installs the extension at build time into this folder.

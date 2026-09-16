@@ -22,6 +22,7 @@ public sealed class DuckDbWarehouse : IDisposable
 {
     private readonly string _path;
     private readonly int _threads;
+    private readonly string? _memoryLimit;
     private readonly ILogger<DuckDbWarehouse> _log;
     private readonly Lock _gate = new();
     private DuckDBConnection? _root;
@@ -31,6 +32,7 @@ public sealed class DuckDbWarehouse : IDisposable
     {
         _path = settings.WarehousePath;
         _threads = settings.Threads;
+        _memoryLimit = settings.MemoryLimit;
         _log = log;
     }
 
@@ -69,6 +71,10 @@ public sealed class DuckDbWarehouse : IDisposable
                 // DuckDB uses every core by default. Limit it when this service
                 // shares the machine with other busy services.
                 root.Execute($"SET threads = {_threads}");
+            }
+            if (_memoryLimit is not null)
+            {
+                root.Execute($"SET memory_limit = '{_memoryLimit.Replace("'", "''")}'");
             }
 
             var old = _root;

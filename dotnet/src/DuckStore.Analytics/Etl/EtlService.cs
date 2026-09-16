@@ -112,6 +112,11 @@ public sealed class EtlSchedule(EtlService etl, DuckStore.Analytics.Warehouse.Wa
             {
                 // someone else is building it
             }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // For example Postgres is not seeded yet. Keep the service up: the ETL page can retry.
+                log.LogError(e, "Startup ETL failed");
+            }
         }
 
         var minutes = config.GetValue("Etl:ScheduleMinutes", 0);
@@ -130,6 +135,10 @@ public sealed class EtlSchedule(EtlService etl, DuckStore.Analytics.Warehouse.Wa
             catch (EtlAlreadyRunningException)
             {
                 log.LogInformation("Scheduled ETL skipped: a run is already in progress");
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                log.LogError(e, "Scheduled ETL failed");
             }
         }
     }

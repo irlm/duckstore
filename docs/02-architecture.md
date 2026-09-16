@@ -55,7 +55,7 @@ flowchart TB
 ### The ETL: build a new file, then swap
 
 The ETL is four SQL files in [etl/](../etl/). `internal/warehouse/etl.go` (Go) and
-`dotnet/src/DuckStore.Web/Etl/WarehouseBuilder.cs` (C#) run the same files:
+`dotnet/src/DuckStore.Analytics/Etl/WarehouseBuilder.cs` (C#) run the same files:
 
 1. **Extract**: `CREATE TABLE raw.orders AS FROM pg.store.orders WHERE id <= <watermark>` for every table.
    DuckDB pulls the rows from Postgres with the binary COPY protocol over several connections.
