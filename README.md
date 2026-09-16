@@ -27,7 +27,7 @@ There are two implementations over the same databases and the same SQL files:
 - **Go**: one binary with the store, the analytics dashboard, the engine race and the SQL console.
   DuckDB runs **inside** the Go process (it is a library, not a server).
 - **.NET**: a Blazor app plus a separate DuckDB **analytics service**, all in Docker, with a **Compare** page
-  that runs 15 questions on Postgres and through the service and shows where the time goes.
+  that runs 15 questions on both engines and both data models, and shows where the time goes.
 
 ## Results on a laptop
 
@@ -86,7 +86,7 @@ What the numbers say:
 Most real systems use **both**, like this project: Postgres runs the store, DuckDB answers the analytics,
 and DuckDB can even read Postgres live when a question needs fresh data.
 
-## The .NET version in Docker: Postgres direct vs a DuckDB service
+## The .NET version in Docker: engine vs data model
 
 [dotnet/](dotnet/) runs as three containers:
 
@@ -99,22 +99,25 @@ and DuckDB can even read Postgres live when a question needs fresh data.
 ```bash
 make docker-up      # build and start the three containers (needs only Docker)
 make docker-seed    # 12.5M orders (SCALE=5) and the warehouse; about 4 minutes
+make docker-star    # optional: the star schema copied into Postgres too; about 3 minutes
 # open http://127.0.0.1:5085/compare
 ```
 
-The Compare page runs the same question two ways, checks that the results are equal, repeats the runs and
-shows the median, split into database, network and JSON time. Selected results at scale 5:
+The Compare page runs each question four ways: Postgres and DuckDB, each on the normalized store tables (the
+same SQL text on both engines) and on the star schema. It checks that all four results are equal, repeats the
+runs, and shows the median split into database, network and JSON time, with the query plans. Selected medians of
+5 runs at scale 5 (12.5M orders, 26.5M order lines, same laptop):
 
-| Question | Postgres direct | DuckDB service | Faster |
-|---|---:|---:|---|
-| Year-over-year growth by department | 49.2 s | 130 ms | DuckDB, 378× |
-| Revenue per month in USD | 36.5 s | 277 ms | DuckDB, 132× |
-| Active customers per month | 2.96 s | 209 ms | DuckDB, 14× |
-| All order lines of one day (42,581 rows) | 264 ms | 283 ms | about equal: 223 ms of it is JSON |
-| One customer's latest orders (lookup by key) | **0.9 ms** | 5.2 ms | Postgres, 5.7× |
+| Question | Postgres · store tables | DuckDB · store tables | Postgres · star schema | DuckDB · star schema |
+|---|---:|---:|---:|---:|
+| Year-over-year growth by department | 49.7 s | 15.3 s | 2.82 s | **159 ms** |
+| Revenue per month in USD | 36.6 s | 2.43 s | 6.62 s | **281 ms** |
+| Delivery time percentiles | 13.0 s | 6.61 s | 12.8 s | **320 ms** |
+| All order lines of one day (42,581 rows) | 280 ms | 461 ms | **109 ms** | 239 ms |
+| One customer's latest orders (lookup by key) | 0.7 ms | 10.0 ms | **0.4 ms** | 3.5 ms |
 
-Medians of 5 runs on the same laptop, 12.5M orders, 26.5M order lines. The HTTP hop between the containers
-costs 1-3 ms per question.
+The engine and the data model both matter: with the same SQL on the same tables DuckDB was 2-21× faster, and the
+star schema added up to 18× on Postgres and 96× on DuckDB. Postgres still wins lookups by key and large results.
 
 Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
 **"one backend or two?"**

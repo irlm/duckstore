@@ -1,181 +1,361 @@
 question,approach,run,warmup,total_ms,db_ms,network_ms,json_ms,rows,payload_bytes
-monthly-revenue,Postgres direct,1,true,36652.537,36646.395,6.142,0.000,37,
-monthly-revenue,Postgres direct,1,false,36072.079,36071.778,0.301,0.000,37,
-monthly-revenue,Postgres direct,2,false,35848.103,35847.943,0.160,0.000,37,
-monthly-revenue,Postgres direct,3,false,36523.352,36523.278,0.073,0.000,37,
-monthly-revenue,Postgres direct,4,false,37023.849,37023.774,0.075,0.000,37,
-monthly-revenue,Postgres direct,5,false,38268.093,38267.854,0.239,0.000,37,
-monthly-revenue,DuckDB service,1,true,350.214,331.350,11.682,5.742,37,1738
-monthly-revenue,DuckDB service,1,false,277.611,274.787,2.210,0.543,37,1738
-monthly-revenue,DuckDB service,2,false,272.151,269.849,1.984,0.276,37,1739
-monthly-revenue,DuckDB service,3,false,282.344,279.276,2.733,0.274,37,1739
-monthly-revenue,DuckDB service,4,false,271.392,269.268,1.898,0.173,37,1739
-monthly-revenue,DuckDB service,5,false,276.849,274.666,1.957,0.181,37,1739
-category-rollup,Postgres direct,1,true,63893.265,63891.602,1.664,0.000,37,
-category-rollup,Postgres direct,1,false,62569.127,62569.047,0.080,0.000,37,
-category-rollup,Postgres direct,2,false,62463.904,62463.816,0.088,0.000,37,
-category-rollup,Postgres direct,3,false,62195.738,62195.478,0.260,0.000,37,
-category-rollup,Postgres direct,4,false,62654.842,62654.782,0.060,0.000,37,
-category-rollup,Postgres direct,5,false,62057.367,62057.308,0.058,0.000,37,
-category-rollup,DuckDB service,1,true,2643.892,2638.916,4.686,0.250,37,2251
-category-rollup,DuckDB service,1,false,2521.067,2518.722,2.103,0.199,37,2251
-category-rollup,DuckDB service,2,false,2569.960,2567.440,2.305,0.177,37,2252
-category-rollup,DuckDB service,3,false,2650.597,2648.352,2.030,0.151,37,2253
-category-rollup,DuckDB service,4,false,2445.253,2441.583,3.456,0.163,37,2252
-category-rollup,DuckDB service,5,false,2437.637,2435.236,2.136,0.232,37,2252
-active-customers,Postgres direct,1,true,3046.510,3046.453,0.057,0.000,37,
-active-customers,Postgres direct,1,false,2959.071,2959.021,0.050,0.000,37,
-active-customers,Postgres direct,2,false,3019.799,3019.735,0.064,0.000,37,
-active-customers,Postgres direct,3,false,3057.134,3057.082,0.052,0.000,37,
-active-customers,Postgres direct,4,false,2927.427,2927.383,0.044,0.000,37,
-active-customers,Postgres direct,5,false,2939.309,2939.257,0.052,0.000,37,
-active-customers,DuckDB service,1,true,222.205,219.432,2.609,0.133,37,1515
-active-customers,DuckDB service,1,false,206.646,204.827,1.661,0.127,37,1515
-active-customers,DuckDB service,2,false,215.069,213.430,1.461,0.143,37,1516
-active-customers,DuckDB service,3,false,209.103,207.541,1.401,0.125,37,1516
-active-customers,DuckDB service,4,false,200.531,199.124,1.263,0.109,37,1515
-active-customers,DuckDB service,5,false,214.369,212.857,1.354,0.122,37,1515
-cohort-retention,Postgres direct,1,true,19681.516,19649.419,32.097,0.000,403,
-cohort-retention,Postgres direct,1,false,19335.082,19303.384,31.697,0.000,403,
-cohort-retention,Postgres direct,2,false,19150.228,19119.729,30.499,0.000,403,
-cohort-retention,Postgres direct,3,false,19197.966,19166.665,31.302,0.000,403,
-cohort-retention,Postgres direct,4,false,19360.453,19326.990,33.463,0.000,403,
-cohort-retention,Postgres direct,5,false,19294.942,19264.010,30.933,0.000,403,
-cohort-retention,DuckDB service,1,true,452.311,450.211,1.720,0.353,403,10023
-cohort-retention,DuckDB service,1,false,474.259,471.450,2.365,0.412,403,10022
-cohort-retention,DuckDB service,2,false,455.079,450.548,4.041,0.423,403,10023
-cohort-retention,DuckDB service,3,false,443.086,438.115,1.766,3.168,403,10023
-cohort-retention,DuckDB service,4,false,450.619,448.817,1.399,0.380,403,10020
-cohort-retention,DuckDB service,5,false,444.511,442.729,1.420,0.338,403,10023
-rfm-segments,Postgres direct,1,true,15221.564,15221.530,0.035,0.000,6,
-rfm-segments,Postgres direct,1,false,14839.464,14839.436,0.027,0.000,6,
-rfm-segments,Postgres direct,2,false,14718.441,14718.413,0.028,0.000,6,
-rfm-segments,Postgres direct,3,false,14600.855,14600.824,0.031,0.000,6,
-rfm-segments,Postgres direct,4,false,14758.116,14758.089,0.027,0.000,6,
-rfm-segments,Postgres direct,5,false,14615.490,14615.419,0.071,0.000,6,
-rfm-segments,DuckDB service,1,true,445.243,443.473,1.610,0.135,6,1538
-rfm-segments,DuckDB service,1,false,404.068,402.251,1.700,0.096,6,1540
-rfm-segments,DuckDB service,2,false,426.511,424.049,2.046,0.393,6,1539
-rfm-segments,DuckDB service,3,false,421.697,420.189,1.369,0.117,6,1540
-rfm-segments,DuckDB service,4,false,426.545,424.579,1.812,0.123,6,1540
-rfm-segments,DuckDB service,5,false,431.392,429.565,1.672,0.122,6,1540
-top-products-per-department,Postgres direct,1,true,26337.290,26337.069,0.221,0.000,24,
-top-products-per-department,Postgres direct,1,false,26489.600,26489.556,0.044,0.000,24,
-top-products-per-department,Postgres direct,2,false,26496.514,26496.482,0.032,0.000,24,
-top-products-per-department,Postgres direct,3,false,26209.492,26209.461,0.031,0.000,24,
-top-products-per-department,Postgres direct,4,false,26249.189,26249.159,0.031,0.000,24,
-top-products-per-department,Postgres direct,5,false,26546.124,26546.093,0.031,0.000,24,
-top-products-per-department,DuckDB service,1,true,449.454,447.507,1.781,0.130,24,2380
-top-products-per-department,DuckDB service,1,false,408.262,406.384,1.689,0.150,24,2379
-top-products-per-department,DuckDB service,2,false,425.402,422.094,3.179,0.116,24,2379
-top-products-per-department,DuckDB service,3,false,414.913,413.518,1.252,0.129,24,2377
-top-products-per-department,DuckDB service,4,false,418.635,417.146,1.172,0.298,24,2379
-top-products-per-department,DuckDB service,5,false,452.919,451.076,1.709,0.120,24,2379
-basket-pairs,Postgres direct,1,true,11530.323,11530.294,0.029,0.000,20,
-basket-pairs,Postgres direct,1,false,11372.578,11372.549,0.029,0.000,20,
-basket-pairs,Postgres direct,2,false,11412.171,11412.143,0.028,0.000,20,
-basket-pairs,Postgres direct,3,false,11363.055,11363.029,0.025,0.000,20,
-basket-pairs,Postgres direct,4,false,11290.003,11289.976,0.026,0.000,20,
-basket-pairs,Postgres direct,5,false,11395.247,11395.219,0.028,0.000,20,
-basket-pairs,DuckDB service,1,true,247.567,243.347,3.884,0.107,20,2539
-basket-pairs,DuckDB service,1,false,242.006,238.802,2.845,0.344,20,2538
-basket-pairs,DuckDB service,2,false,236.071,233.644,2.292,0.121,20,2538
-basket-pairs,DuckDB service,3,false,244.914,242.379,2.428,0.093,20,2538
-basket-pairs,DuckDB service,4,false,240.615,234.135,6.363,0.102,20,2539
-basket-pairs,DuckDB service,5,false,239.421,235.738,3.573,0.096,20,2537
-brand-returns,Postgres direct,1,true,4721.681,4721.658,0.023,0.000,15,
-brand-returns,Postgres direct,1,false,4585.316,4585.285,0.030,0.000,15,
-brand-returns,Postgres direct,2,false,4628.830,4628.803,0.027,0.000,15,
-brand-returns,Postgres direct,3,false,4585.383,4585.362,0.021,0.000,15,
-brand-returns,Postgres direct,4,false,4622.905,4622.884,0.021,0.000,15,
-brand-returns,Postgres direct,5,false,4618.096,4617.874,0.222,0.000,15,
-brand-returns,DuckDB service,1,true,244.051,242.646,1.308,0.084,15,1245
-brand-returns,DuckDB service,1,false,237.401,235.735,1.543,0.108,15,1246
-brand-returns,DuckDB service,2,false,230.776,228.969,1.688,0.096,15,1246
-brand-returns,DuckDB service,3,false,221.183,219.783,1.281,0.101,15,1245
-brand-returns,DuckDB service,4,false,220.240,218.886,1.239,0.102,15,1245
-brand-returns,DuckDB service,5,false,230.181,228.655,1.369,0.141,15,1246
-delivery-percentiles,Postgres direct,1,true,14114.873,14114.832,0.041,0.000,15,
-delivery-percentiles,Postgres direct,1,false,13187.045,13187.021,0.025,0.000,15,
-delivery-percentiles,Postgres direct,2,false,12994.282,12994.239,0.043,0.000,15,
-delivery-percentiles,Postgres direct,3,false,12835.645,12835.604,0.041,0.000,15,
-delivery-percentiles,Postgres direct,4,false,12888.364,12888.320,0.044,0.000,15,
-delivery-percentiles,Postgres direct,5,false,12797.890,12797.849,0.041,0.000,15,
-delivery-percentiles,DuckDB service,1,true,362.666,361.451,1.069,0.132,15,1341
-delivery-percentiles,DuckDB service,1,false,323.452,322.258,1.047,0.133,15,1340
-delivery-percentiles,DuckDB service,2,false,306.357,304.900,1.308,0.133,15,1339
-delivery-percentiles,DuckDB service,3,false,315.645,314.337,1.128,0.165,15,1341
-delivery-percentiles,DuckDB service,4,false,308.010,306.715,1.131,0.145,15,1341
-delivery-percentiles,DuckDB service,5,false,304.162,302.110,1.877,0.160,15,1341
-sales-hierarchy,Postgres direct,1,true,10532.117,10530.540,1.577,0.000,17,
-sales-hierarchy,Postgres direct,1,false,7549.062,7549.035,0.027,0.000,17,
-sales-hierarchy,Postgres direct,2,false,7647.339,7647.306,0.033,0.000,17,
-sales-hierarchy,Postgres direct,3,false,7637.171,7637.138,0.033,0.000,17,
-sales-hierarchy,Postgres direct,4,false,7686.102,7686.070,0.032,0.000,17,
-sales-hierarchy,Postgres direct,5,false,7660.798,7660.734,0.064,0.000,17,
-sales-hierarchy,DuckDB service,1,true,166.019,164.774,1.120,0.112,17,2100
-sales-hierarchy,DuckDB service,1,false,134.650,133.264,1.262,0.106,17,2100
-sales-hierarchy,DuckDB service,2,false,144.647,142.916,1.304,0.409,17,2100
-sales-hierarchy,DuckDB service,3,false,137.948,136.462,1.365,0.107,17,2101
-sales-hierarchy,DuckDB service,4,false,149.399,147.963,1.311,0.107,17,2100
-sales-hierarchy,DuckDB service,5,false,141.727,140.411,1.173,0.126,17,2101
-unusual-days,Postgres direct,1,true,2036.903,2036.850,0.053,0.000,21,
-unusual-days,Postgres direct,1,false,2030.751,2030.722,0.029,0.000,21,
-unusual-days,Postgres direct,2,false,2042.771,2042.739,0.032,0.000,21,
-unusual-days,Postgres direct,3,false,2036.614,2036.584,0.030,0.000,21,
-unusual-days,Postgres direct,4,false,1998.713,1998.476,0.237,0.000,21,
-unusual-days,Postgres direct,5,false,2101.374,2101.344,0.030,0.000,21,
-unusual-days,DuckDB service,1,true,7.938,6.612,1.197,0.111,21,1534
-unusual-days,DuckDB service,1,false,7.507,6.512,0.902,0.083,21,1533
-unusual-days,DuckDB service,2,false,7.540,6.547,0.883,0.101,21,1534
-unusual-days,DuckDB service,3,false,7.361,6.333,0.944,0.077,21,1534
-unusual-days,DuckDB service,4,false,7.456,6.473,0.888,0.083,21,1534
-unusual-days,DuckDB service,5,false,7.365,6.389,0.878,0.088,21,1533
-yoy-growth,Postgres direct,1,true,51267.309,51267.248,0.061,0.000,96,
-yoy-growth,Postgres direct,1,false,49468.516,49468.450,0.066,0.000,96,
-yoy-growth,Postgres direct,2,false,49742.927,49742.863,0.063,0.000,96,
-yoy-growth,Postgres direct,3,false,49170.799,49170.734,0.066,0.000,96,
-yoy-growth,Postgres direct,4,false,49030.997,49030.930,0.067,0.000,96,
-yoy-growth,Postgres direct,5,false,48719.918,48719.855,0.063,0.000,96,
-yoy-growth,DuckDB service,1,true,133.741,131.374,2.123,0.234,96,6254
-yoy-growth,DuckDB service,1,false,128.694,125.975,2.509,0.201,96,6254
-yoy-growth,DuckDB service,2,false,140.977,139.638,1.129,0.198,96,6254
-yoy-growth,DuckDB service,3,false,134.175,132.405,1.510,0.248,96,6253
-yoy-growth,DuckDB service,4,false,130.181,128.125,1.800,0.245,96,6255
-yoy-growth,DuckDB service,5,false,130.038,128.567,1.281,0.180,96,6252
-clv-buckets,Postgres direct,1,true,12281.988,12281.973,0.015,0.000,7,
-clv-buckets,Postgres direct,1,false,12179.062,12179.043,0.019,0.000,7,
-clv-buckets,Postgres direct,2,false,12086.919,12086.905,0.014,0.000,7,
-clv-buckets,Postgres direct,3,false,12247.739,12247.724,0.014,0.000,7,
-clv-buckets,Postgres direct,4,false,12153.864,12153.849,0.016,0.000,7,
-clv-buckets,Postgres direct,5,false,12505.080,12505.066,0.015,0.000,7,
-clv-buckets,DuckDB service,1,true,201.334,200.026,1.186,0.111,7,1388
-clv-buckets,DuckDB service,1,false,193.380,192.277,1.021,0.073,7,1389
-clv-buckets,DuckDB service,2,false,200.912,199.636,1.193,0.073,7,1389
-clv-buckets,DuckDB service,3,false,192.001,190.956,0.960,0.075,7,1389
-clv-buckets,DuckDB service,4,false,193.968,192.872,1.022,0.065,7,1389
-clv-buckets,DuckDB service,5,false,201.324,199.682,1.554,0.078,7,1389
-detail-extract,Postgres direct,1,true,298.482,233.006,65.476,0.000,42581,
-detail-extract,Postgres direct,1,false,265.295,221.555,43.741,0.000,42581,
-detail-extract,Postgres direct,2,false,259.598,228.778,30.820,0.000,42581,
-detail-extract,Postgres direct,3,false,246.577,217.601,28.976,0.000,42581,
-detail-extract,Postgres direct,4,false,310.236,225.898,84.338,0.000,42581,
-detail-extract,Postgres direct,5,false,263.666,219.904,43.762,0.000,42581,
-detail-extract,DuckDB service,1,true,340.193,50.979,7.716,279.550,42581,4209549
-detail-extract,DuckDB service,1,false,283.015,54.615,4.812,222.861,42581,4209548
-detail-extract,DuckDB service,2,false,319.951,47.952,3.412,268.048,42581,4209549
-detail-extract,DuckDB service,3,false,199.909,51.657,4.310,142.820,42581,4209560
-detail-extract,DuckDB service,4,false,213.904,86.004,3.380,123.931,42581,4209548
-detail-extract,DuckDB service,5,false,336.735,80.766,4.197,250.556,42581,4209560
-customer-orders,Postgres direct,1,true,1.157,1.124,0.034,0.000,16,
-customer-orders,Postgres direct,1,false,0.918,0.889,0.028,0.000,16,
-customer-orders,Postgres direct,2,false,1.169,1.133,0.036,0.000,16,
-customer-orders,Postgres direct,3,false,0.901,0.872,0.029,0.000,16,
-customer-orders,Postgres direct,4,false,1.054,1.014,0.040,0.000,16,
-customer-orders,Postgres direct,5,false,0.882,0.856,0.026,0.000,16,
-customer-orders,DuckDB service,1,true,10.493,9.389,0.983,0.112,16,1224
-customer-orders,DuckDB service,1,false,5.401,4.567,0.675,0.141,16,1224
-customer-orders,DuckDB service,2,false,5.242,4.459,0.631,0.143,16,1223
-customer-orders,DuckDB service,3,false,7.180,6.369,0.653,0.139,16,1223
-customer-orders,DuckDB service,4,false,4.564,3.818,0.646,0.090,16,1224
-customer-orders,DuckDB service,5,false,5.017,4.093,0.771,0.135,16,1223
+monthly-revenue,postgres-store,1,true,39269.779,39263.942,5.837,0.000,37,
+monthly-revenue,postgres-store,1,false,36512.045,36511.880,0.165,0.000,37,
+monthly-revenue,postgres-store,2,false,36879.131,36879.054,0.077,0.000,37,
+monthly-revenue,postgres-store,3,false,36622.145,36618.237,3.908,0.000,37,
+monthly-revenue,postgres-store,4,false,36667.846,36667.779,0.067,0.000,37,
+monthly-revenue,postgres-store,5,false,35938.588,35938.522,0.066,0.000,37,
+monthly-revenue,duckdb-store,1,true,2626.590,2566.263,44.235,14.716,37,2756
+monthly-revenue,duckdb-store,1,false,2470.015,2467.385,2.246,0.330,37,2758
+monthly-revenue,duckdb-store,2,false,2428.122,2422.866,5.018,0.189,37,2758
+monthly-revenue,duckdb-store,3,false,2424.720,2422.632,1.875,0.181,37,2759
+monthly-revenue,duckdb-store,4,false,2432.251,2421.126,10.863,0.223,37,2758
+monthly-revenue,duckdb-store,5,false,2464.799,2462.242,2.340,0.175,37,2758
+monthly-revenue,postgres-star,1,true,6788.868,6788.564,0.304,0.000,37,
+monthly-revenue,postgres-star,1,false,6768.510,6768.432,0.078,0.000,37,
+monthly-revenue,postgres-star,2,false,6674.879,6674.777,0.102,0.000,37,
+monthly-revenue,postgres-star,3,false,6624.529,6624.473,0.056,0.000,37,
+monthly-revenue,postgres-star,4,false,6215.634,6215.566,0.068,0.000,37,
+monthly-revenue,postgres-star,5,false,6307.921,6307.862,0.059,0.000,37,
+monthly-revenue,duckdb-star,1,true,311.172,308.181,2.384,0.553,37,1739
+monthly-revenue,duckdb-star,1,false,260.821,258.799,1.756,0.187,37,1739
+monthly-revenue,duckdb-star,2,false,271.308,269.087,1.920,0.256,37,1740
+monthly-revenue,duckdb-star,3,false,293.274,274.017,19.028,0.192,37,1736
+monthly-revenue,duckdb-star,4,false,297.210,281.316,15.685,0.154,37,1739
+monthly-revenue,duckdb-star,5,false,281.011,278.882,1.796,0.292,37,1738
+category-rollup,postgres-store,1,true,63132.084,63130.362,1.722,0.000,37,
+category-rollup,postgres-store,1,false,63257.875,63257.787,0.089,0.000,37,
+category-rollup,postgres-store,2,false,63072.733,63072.670,0.063,0.000,37,
+category-rollup,postgres-store,3,false,62793.121,62793.064,0.057,0.000,37,
+category-rollup,postgres-store,4,false,62376.982,62376.936,0.046,0.000,37,
+category-rollup,postgres-store,5,false,62978.683,62978.634,0.049,0.000,37,
+category-rollup,duckdb-store,1,true,12301.657,12299.040,2.266,0.323,37,3611
+category-rollup,duckdb-store,1,false,11911.625,11908.647,2.728,0.213,37,3611
+category-rollup,duckdb-store,2,false,11975.775,11973.407,2.075,0.259,37,3611
+category-rollup,duckdb-store,3,false,12219.397,12216.710,2.443,0.214,37,3611
+category-rollup,duckdb-store,4,false,11867.181,11863.803,2.835,0.483,37,3610
+category-rollup,duckdb-store,5,false,12202.784,12191.437,11.132,0.188,37,3610
+category-rollup,postgres-star,1,true,21176.182,21167.025,9.156,0.000,37,
+category-rollup,postgres-star,1,false,20568.710,20568.656,0.054,0.000,37,
+category-rollup,postgres-star,2,false,20908.269,20908.217,0.052,0.000,37,
+category-rollup,postgres-star,3,false,20484.709,20484.653,0.056,0.000,37,
+category-rollup,postgres-star,4,false,20705.852,20705.806,0.046,0.000,37,
+category-rollup,postgres-star,5,false,20691.471,20691.423,0.048,0.000,37,
+category-rollup,duckdb-star,1,true,2483.358,2479.712,3.421,0.196,37,2252
+category-rollup,duckdb-star,1,false,2506.914,2504.098,2.587,0.194,37,2252
+category-rollup,duckdb-star,2,false,2432.911,2430.041,2.652,0.193,37,2253
+category-rollup,duckdb-star,3,false,2506.855,2504.283,2.363,0.180,37,2252
+category-rollup,duckdb-star,4,false,2532.591,2517.861,14.541,0.159,37,2253
+category-rollup,duckdb-star,5,false,2555.009,2552.426,2.375,0.184,37,2252
+active-customers,postgres-store,1,true,2917.868,2917.827,0.041,0.000,37,
+active-customers,postgres-store,1,false,2899.017,2898.974,0.043,0.000,37,
+active-customers,postgres-store,2,false,3217.932,3217.885,0.046,0.000,37,
+active-customers,postgres-store,3,false,2931.793,2931.756,0.037,0.000,37,
+active-customers,postgres-store,4,false,3087.588,3087.558,0.030,0.000,37,
+active-customers,postgres-store,5,false,2958.986,2958.959,0.028,0.000,37,
+active-customers,duckdb-store,1,true,881.970,880.282,1.484,0.182,37,1534
+active-customers,duckdb-store,1,false,844.635,843.038,1.424,0.147,37,1535
+active-customers,duckdb-store,2,false,890.935,889.291,1.448,0.146,37,1535
+active-customers,duckdb-store,3,false,871.164,869.010,1.938,0.181,37,1535
+active-customers,duckdb-store,4,false,840.690,839.422,1.161,0.093,37,1535
+active-customers,duckdb-store,5,false,865.178,863.892,1.167,0.101,37,1534
+active-customers,postgres-star,1,true,3565.790,3565.749,0.040,0.000,37,
+active-customers,postgres-star,1,false,3083.722,3083.669,0.053,0.000,37,
+active-customers,postgres-star,2,false,3047.648,3047.606,0.042,0.000,37,
+active-customers,postgres-star,3,false,3002.545,3002.497,0.049,0.000,37,
+active-customers,postgres-star,4,false,3014.536,3014.507,0.029,0.000,37,
+active-customers,postgres-star,5,false,3068.747,3068.715,0.031,0.000,37,
+active-customers,duckdb-star,1,true,237.098,235.273,1.637,0.165,37,1515
+active-customers,duckdb-star,1,false,215.980,214.233,1.560,0.159,37,1516
+active-customers,duckdb-star,2,false,233.482,231.311,1.890,0.153,37,1516
+active-customers,duckdb-star,3,false,203.807,202.049,1.526,0.198,37,1515
+active-customers,duckdb-star,4,false,199.257,197.980,1.169,0.094,37,1515
+active-customers,duckdb-star,5,false,199.071,197.805,1.168,0.084,37,1515
+cohort-retention,postgres-store,1,true,19843.531,19812.057,31.474,0.000,403,
+cohort-retention,postgres-store,1,false,19427.923,19400.672,27.250,0.000,403,
+cohort-retention,postgres-store,2,false,19607.171,19576.225,30.947,0.000,403,
+cohort-retention,postgres-store,3,false,19451.496,19422.106,29.390,0.000,403,
+cohort-retention,postgres-store,4,false,19667.162,19637.425,29.737,0.000,403,
+cohort-retention,postgres-store,5,false,19198.736,19169.647,29.089,0.000,403,
+cohort-retention,duckdb-store,1,true,1924.829,1910.927,11.425,2.459,403,10135
+cohort-retention,duckdb-store,1,false,1879.835,1877.822,1.616,0.381,403,10135
+cohort-retention,duckdb-store,2,false,1910.420,1908.614,1.414,0.374,403,10132
+cohort-retention,duckdb-store,3,false,1932.563,1930.764,1.374,0.406,403,10135
+cohort-retention,duckdb-store,4,false,1898.118,1896.065,1.680,0.358,403,10135
+cohort-retention,duckdb-store,5,false,1879.391,1877.384,1.492,0.499,403,10135
+cohort-retention,postgres-star,1,true,21781.252,21754.868,26.383,0.000,403,
+cohort-retention,postgres-star,1,false,21728.955,21698.340,30.615,0.000,403,
+cohort-retention,postgres-star,2,false,21466.396,21437.243,29.153,0.000,403,
+cohort-retention,postgres-star,3,false,22113.337,22083.590,29.747,0.000,403,
+cohort-retention,postgres-star,4,false,21863.200,21836.530,26.670,0.000,403,
+cohort-retention,postgres-star,5,false,21509.737,21480.048,29.689,0.000,403,
+cohort-retention,duckdb-star,1,true,446.250,443.202,2.595,0.436,403,10023
+cohort-retention,duckdb-star,1,false,439.749,437.686,1.692,0.345,403,10022
+cohort-retention,duckdb-star,2,false,455.132,450.445,2.054,2.616,403,10023
+cohort-retention,duckdb-star,3,false,460.818,458.235,2.150,0.415,403,10021
+cohort-retention,duckdb-star,4,false,434.079,432.130,1.590,0.342,403,10022
+cohort-retention,duckdb-star,5,false,441.767,439.577,1.609,0.560,403,10022
+rfm-segments,postgres-store,1,true,15136.441,15136.418,0.023,0.000,6,
+rfm-segments,postgres-store,1,false,14933.026,14933.006,0.020,0.000,6,
+rfm-segments,postgres-store,2,false,15292.413,15292.392,0.021,0.000,6,
+rfm-segments,postgres-store,3,false,14847.279,14847.258,0.021,0.000,6,
+rfm-segments,postgres-store,4,false,14756.960,14756.756,0.204,0.000,6,
+rfm-segments,postgres-store,5,false,14733.631,14733.613,0.019,0.000,6,
+rfm-segments,duckdb-store,1,true,1459.815,1443.916,1.528,14.357,6,2452
+rfm-segments,duckdb-store,1,false,1435.779,1433.026,2.592,0.146,6,2453
+rfm-segments,duckdb-store,2,false,1434.976,1433.214,1.405,0.327,6,2453
+rfm-segments,duckdb-store,3,false,1392.984,1391.303,1.486,0.181,6,2453
+rfm-segments,duckdb-store,4,false,1408.292,1406.528,1.501,0.233,6,2451
+rfm-segments,duckdb-store,5,false,1443.568,1441.888,1.533,0.132,6,2452
+rfm-segments,postgres-star,1,true,14561.779,14561.743,0.036,0.000,6,
+rfm-segments,postgres-star,1,false,12648.329,12648.308,0.020,0.000,6,
+rfm-segments,postgres-star,2,false,12680.946,12680.924,0.022,0.000,6,
+rfm-segments,postgres-star,3,false,12560.124,12560.104,0.021,0.000,6,
+rfm-segments,postgres-star,4,false,12571.548,12571.328,0.220,0.000,6,
+rfm-segments,postgres-star,5,false,12596.883,12596.820,0.063,0.000,6,
+rfm-segments,duckdb-star,1,true,452.587,450.884,1.543,0.136,6,1540
+rfm-segments,duckdb-star,1,false,414.876,413.164,1.566,0.132,6,1540
+rfm-segments,duckdb-star,2,false,438.923,437.465,1.339,0.106,6,1540
+rfm-segments,duckdb-star,3,false,426.184,424.217,1.825,0.128,6,1540
+rfm-segments,duckdb-star,4,false,408.089,406.370,1.588,0.116,6,1540
+rfm-segments,duckdb-star,5,false,440.497,438.176,2.166,0.141,6,1540
+top-products-per-department,postgres-store,1,true,28569.137,28568.884,0.253,0.000,24,
+top-products-per-department,postgres-store,1,false,26356.959,26356.925,0.035,0.000,24,
+top-products-per-department,postgres-store,2,false,25850.846,25850.784,0.061,0.000,24,
+top-products-per-department,postgres-store,3,false,25922.508,25922.470,0.038,0.000,24,
+top-products-per-department,postgres-store,4,false,25901.713,25901.686,0.027,0.000,24,
+top-products-per-department,postgres-store,5,false,26388.357,26388.322,0.035,0.000,24,
+top-products-per-department,duckdb-store,1,true,4517.797,4515.684,1.556,0.517,24,3853
+top-products-per-department,duckdb-store,1,false,4327.984,4326.199,1.426,0.333,24,3853
+top-products-per-department,duckdb-store,2,false,4014.256,4012.367,1.441,0.427,24,3852
+top-products-per-department,duckdb-store,3,false,4207.047,4204.722,2.035,0.281,24,3852
+top-products-per-department,duckdb-store,4,false,4026.456,4024.915,1.405,0.122,24,3853
+top-products-per-department,duckdb-store,5,false,3935.875,3934.730,0.994,0.131,24,3852
+top-products-per-department,postgres-star,1,true,3038.625,3038.570,0.055,0.000,24,
+top-products-per-department,postgres-star,1,false,2949.213,2949.163,0.051,0.000,24,
+top-products-per-department,postgres-star,2,false,2860.535,2860.501,0.034,0.000,24,
+top-products-per-department,postgres-star,3,false,2971.225,2971.189,0.037,0.000,24,
+top-products-per-department,postgres-star,4,false,2856.029,2855.992,0.037,0.000,24,
+top-products-per-department,postgres-star,5,false,2904.881,2904.844,0.036,0.000,24,
+top-products-per-department,duckdb-star,1,true,565.098,563.498,1.440,0.147,24,2379
+top-products-per-department,duckdb-star,1,false,494.337,493.041,1.152,0.133,24,2379
+top-products-per-department,duckdb-star,2,false,432.360,430.925,1.260,0.141,24,2379
+top-products-per-department,duckdb-star,3,false,479.182,477.801,1.223,0.148,24,2380
+top-products-per-department,duckdb-star,4,false,443.457,441.977,1.326,0.145,24,2380
+top-products-per-department,duckdb-star,5,false,428.906,426.976,1.763,0.145,24,2379
+basket-pairs,postgres-store,1,true,11944.483,11944.452,0.031,0.000,20,
+basket-pairs,postgres-store,1,false,11245.084,11245.046,0.039,0.000,20,
+basket-pairs,postgres-store,2,false,11274.948,11274.918,0.030,0.000,20,
+basket-pairs,postgres-store,3,false,11343.220,11343.199,0.022,0.000,20,
+basket-pairs,postgres-store,4,false,11283.342,11283.306,0.036,0.000,20,
+basket-pairs,postgres-store,5,false,11286.735,11286.703,0.031,0.000,20,
+basket-pairs,duckdb-store,1,true,557.817,556.179,1.490,0.133,20,2625
+basket-pairs,duckdb-store,1,false,544.280,542.813,1.074,0.383,20,2625
+basket-pairs,duckdb-store,2,false,561.766,559.621,1.977,0.157,20,2624
+basket-pairs,duckdb-store,3,false,554.170,552.788,1.245,0.119,20,2624
+basket-pairs,duckdb-store,4,false,541.062,539.941,0.996,0.115,20,2625
+basket-pairs,duckdb-store,5,false,542.013,540.557,1.326,0.119,20,2625
+basket-pairs,postgres-star,1,true,7483.942,7483.908,0.034,0.000,20,
+basket-pairs,postgres-star,1,false,7375.845,7375.805,0.040,0.000,20,
+basket-pairs,postgres-star,2,false,7705.045,7704.997,0.048,0.000,20,
+basket-pairs,postgres-star,3,false,7493.323,7493.287,0.036,0.000,20,
+basket-pairs,postgres-star,4,false,7441.947,7441.899,0.048,0.000,20,
+basket-pairs,postgres-star,5,false,7412.536,7412.502,0.034,0.000,20,
+basket-pairs,duckdb-star,1,true,261.915,258.097,3.666,0.132,20,2539
+basket-pairs,duckdb-star,1,false,247.750,245.814,1.808,0.117,20,2539
+basket-pairs,duckdb-star,2,false,237.030,235.045,1.852,0.123,20,2539
+basket-pairs,duckdb-star,3,false,236.699,232.492,4.074,0.097,20,2539
+basket-pairs,duckdb-star,4,false,246.316,244.401,1.797,0.108,20,2539
+basket-pairs,duckdb-star,5,false,233.821,231.274,2.397,0.106,20,2539
+brand-returns,postgres-store,1,true,4718.935,4718.918,0.016,0.000,15,
+brand-returns,postgres-store,1,false,4823.759,4823.718,0.041,0.000,15,
+brand-returns,postgres-store,2,false,4674.448,4674.417,0.031,0.000,15,
+brand-returns,postgres-store,3,false,4977.801,4977.762,0.039,0.000,15,
+brand-returns,postgres-store,4,false,4663.414,4663.373,0.042,0.000,15,
+brand-returns,postgres-store,5,false,4720.014,4719.978,0.036,0.000,15,
+brand-returns,duckdb-store,1,true,432.286,430.886,1.287,0.104,15,1372
+brand-returns,duckdb-store,1,false,445.504,444.225,1.134,0.132,15,1372
+brand-returns,duckdb-store,2,false,416.441,415.275,1.064,0.092,15,1373
+brand-returns,duckdb-store,3,false,435.820,434.570,1.149,0.078,15,1373
+brand-returns,duckdb-store,4,false,404.421,403.341,0.993,0.078,15,1373
+brand-returns,duckdb-store,5,false,404.028,402.908,1.023,0.087,15,1373
+brand-returns,postgres-star,1,true,3029.797,3029.781,0.016,0.000,15,
+brand-returns,postgres-star,1,false,2906.948,2906.932,0.016,0.000,15,
+brand-returns,postgres-star,2,false,2934.007,2933.974,0.033,0.000,15,
+brand-returns,postgres-star,3,false,2962.072,2962.055,0.017,0.000,15,
+brand-returns,postgres-star,4,false,2932.808,2932.793,0.015,0.000,15,
+brand-returns,postgres-star,5,false,2940.481,2940.465,0.015,0.000,15,
+brand-returns,duckdb-star,1,true,255.449,254.271,1.062,0.106,15,1246
+brand-returns,duckdb-star,1,false,229.006,227.846,1.040,0.105,15,1246
+brand-returns,duckdb-star,2,false,233.690,231.108,2.479,0.092,15,1246
+brand-returns,duckdb-star,3,false,226.505,225.071,1.122,0.303,15,1245
+brand-returns,duckdb-star,4,false,220.581,219.329,1.120,0.121,15,1245
+brand-returns,duckdb-star,5,false,223.802,222.286,1.385,0.121,15,1244
+delivery-percentiles,postgres-store,1,true,14267.932,14267.896,0.035,0.000,15,
+delivery-percentiles,postgres-store,1,false,13046.791,13046.771,0.020,0.000,15,
+delivery-percentiles,postgres-store,2,false,12929.385,12929.367,0.019,0.000,15,
+delivery-percentiles,postgres-store,3,false,13202.183,13202.159,0.025,0.000,15,
+delivery-percentiles,postgres-store,4,false,12951.101,12951.081,0.019,0.000,15,
+delivery-percentiles,postgres-store,5,false,13103.738,13103.720,0.018,0.000,15,
+delivery-percentiles,duckdb-store,1,true,6830.068,6827.938,1.961,0.135,15,1725
+delivery-percentiles,duckdb-store,1,false,6572.135,6567.600,0.997,3.526,15,1724
+delivery-percentiles,duckdb-store,2,false,6666.760,6665.296,1.343,0.111,15,1725
+delivery-percentiles,duckdb-store,3,false,6607.359,6606.255,1.001,0.093,15,1724
+delivery-percentiles,duckdb-store,4,false,6581.998,6579.985,1.906,0.097,15,1725
+delivery-percentiles,duckdb-store,5,false,6665.259,6664.044,1.123,0.082,15,1725
+delivery-percentiles,postgres-star,1,true,13016.364,13016.326,0.038,0.000,15,
+delivery-percentiles,postgres-star,1,false,12906.995,12906.970,0.025,0.000,15,
+delivery-percentiles,postgres-star,2,false,12932.416,12932.397,0.019,0.000,15,
+delivery-percentiles,postgres-star,3,false,12770.302,12770.282,0.020,0.000,15,
+delivery-percentiles,postgres-star,4,false,12564.534,12564.508,0.025,0.000,15,
+delivery-percentiles,postgres-star,5,false,12671.867,12671.847,0.019,0.000,15,
+delivery-percentiles,duckdb-star,1,true,360.603,359.488,0.983,0.122,15,1341
+delivery-percentiles,duckdb-star,1,false,319.508,318.294,1.110,0.093,15,1340
+delivery-percentiles,duckdb-star,2,false,349.846,348.387,1.133,0.316,15,1341
+delivery-percentiles,duckdb-star,3,false,337.961,336.647,1.206,0.097,15,1341
+delivery-percentiles,duckdb-star,4,false,283.034,281.840,1.075,0.108,15,1341
+delivery-percentiles,duckdb-star,5,false,315.971,314.693,1.172,0.095,15,1341
+sales-hierarchy,postgres-store,1,true,14427.891,14427.864,0.027,0.000,17,
+sales-hierarchy,postgres-store,1,false,8429.421,8429.396,0.024,0.000,17,
+sales-hierarchy,postgres-store,2,false,8151.564,8151.539,0.025,0.000,17,
+sales-hierarchy,postgres-store,3,false,8267.507,8267.480,0.027,0.000,17,
+sales-hierarchy,postgres-store,4,false,8157.532,8157.505,0.026,0.000,17,
+sales-hierarchy,postgres-store,5,false,8155.931,8155.903,0.028,0.000,17,
+sales-hierarchy,duckdb-store,1,true,933.860,932.502,1.063,0.282,17,3521
+sales-hierarchy,duckdb-store,1,false,870.413,869.314,0.980,0.108,17,3522
+sales-hierarchy,duckdb-store,2,false,878.298,876.649,1.543,0.095,17,3521
+sales-hierarchy,duckdb-store,3,false,870.419,869.357,0.959,0.093,17,3522
+sales-hierarchy,duckdb-store,4,false,871.498,870.451,0.945,0.088,17,3521
+sales-hierarchy,duckdb-store,5,false,879.478,878.256,1.111,0.097,17,3522
+sales-hierarchy,postgres-star,1,true,1050.677,1050.649,0.027,0.000,17,
+sales-hierarchy,postgres-star,1,false,983.878,983.840,0.038,0.000,17,
+sales-hierarchy,postgres-star,2,false,991.648,991.622,0.026,0.000,17,
+sales-hierarchy,postgres-star,3,false,997.730,997.702,0.028,0.000,17,
+sales-hierarchy,postgres-star,4,false,987.502,987.475,0.027,0.000,17,
+sales-hierarchy,postgres-star,5,false,990.000,989.974,0.026,0.000,17,
+sales-hierarchy,duckdb-star,1,true,164.424,163.068,1.236,0.109,17,2100
+sales-hierarchy,duckdb-star,1,false,145.045,143.882,1.053,0.099,17,2101
+sales-hierarchy,duckdb-star,2,false,143.896,142.766,1.027,0.093,17,2101
+sales-hierarchy,duckdb-star,3,false,140.566,139.205,1.264,0.087,17,2101
+sales-hierarchy,duckdb-star,4,false,149.909,148.580,1.229,0.090,17,2101
+sales-hierarchy,duckdb-star,5,false,147.800,146.488,1.198,0.099,17,2100
+unusual-days,postgres-store,1,true,2038.957,2038.911,0.046,0.000,21,
+unusual-days,postgres-store,1,false,2077.611,2077.572,0.039,0.000,21,
+unusual-days,postgres-store,2,false,2090.453,2090.421,0.032,0.000,21,
+unusual-days,postgres-store,3,false,2033.489,2033.461,0.028,0.000,21,
+unusual-days,postgres-store,4,false,2064.752,2064.723,0.029,0.000,21,
+unusual-days,postgres-store,5,false,2015.287,2015.259,0.028,0.000,21,
+unusual-days,duckdb-store,1,true,313.386,311.733,1.535,0.109,21,1573
+unusual-days,duckdb-store,1,false,312.005,310.969,0.937,0.089,21,1573
+unusual-days,duckdb-store,2,false,300.635,299.531,0.982,0.101,21,1572
+unusual-days,duckdb-store,3,false,307.591,306.564,0.891,0.122,21,1572
+unusual-days,duckdb-store,4,false,300.012,298.910,0.974,0.111,21,1573
+unusual-days,duckdb-store,5,false,313.817,312.735,0.967,0.104,21,1573
+unusual-days,postgres-star,1,true,229.246,229.218,0.028,0.000,21,
+unusual-days,postgres-star,1,false,181.875,181.847,0.028,0.000,21,
+unusual-days,postgres-star,2,false,183.190,183.160,0.030,0.000,21,
+unusual-days,postgres-star,3,false,181.864,181.836,0.028,0.000,21,
+unusual-days,postgres-star,4,false,182.531,182.503,0.028,0.000,21,
+unusual-days,postgres-star,5,false,189.103,189.076,0.027,0.000,21,
+unusual-days,duckdb-star,1,true,8.118,7.071,0.960,0.075,21,1533
+unusual-days,duckdb-star,1,false,7.450,6.502,0.844,0.095,21,1532
+unusual-days,duckdb-star,2,false,8.699,7.770,0.844,0.076,21,1533
+unusual-days,duckdb-star,3,false,8.230,7.107,1.019,0.091,21,1534
+unusual-days,duckdb-star,4,false,7.499,6.484,0.900,0.107,21,1534
+unusual-days,duckdb-star,5,false,7.660,6.756,0.810,0.084,21,1534
+yoy-growth,postgres-store,1,true,51110.187,51110.120,0.066,0.000,96,
+yoy-growth,postgres-store,1,false,50109.318,50109.251,0.066,0.000,96,
+yoy-growth,postgres-store,2,false,49914.699,49914.644,0.056,0.000,96,
+yoy-growth,postgres-store,3,false,49014.108,49014.047,0.061,0.000,96,
+yoy-growth,postgres-store,4,false,49656.070,49656.006,0.064,0.000,96,
+yoy-growth,postgres-store,5,false,49110.916,49110.837,0.079,0.000,96,
+yoy-growth,duckdb-store,1,true,15684.729,15683.444,1.062,0.212,96,7734
+yoy-growth,duckdb-store,1,false,15335.379,15333.165,1.973,0.230,96,7736
+yoy-growth,duckdb-store,2,false,15571.940,15570.361,1.314,0.254,96,7736
+yoy-growth,duckdb-store,3,false,15256.725,15254.547,1.915,0.252,96,7736
+yoy-growth,duckdb-store,4,false,15480.956,15465.163,1.189,14.591,96,7736
+yoy-growth,duckdb-store,5,false,15301.927,15289.390,12.320,0.208,96,7735
+yoy-growth,postgres-star,1,true,3066.403,3066.336,0.067,0.000,96,
+yoy-growth,postgres-star,1,false,2920.228,2920.129,0.098,0.000,96,
+yoy-growth,postgres-star,2,false,2814.646,2814.588,0.059,0.000,96,
+yoy-growth,postgres-star,3,false,2822.195,2822.120,0.075,0.000,96,
+yoy-growth,postgres-star,4,false,2892.639,2892.573,0.066,0.000,96,
+yoy-growth,postgres-star,5,false,2753.636,2753.573,0.062,0.000,96,
+yoy-growth,duckdb-star,1,true,145.832,144.299,1.272,0.250,96,6253
+yoy-growth,duckdb-star,1,false,185.757,151.414,34.109,0.224,96,6253
+yoy-growth,duckdb-star,2,false,142.880,141.346,1.299,0.226,96,6254
+yoy-growth,duckdb-star,3,false,170.220,164.835,5.148,0.224,96,6254
+yoy-growth,duckdb-star,4,false,159.217,153.915,5.089,0.203,96,6255
+yoy-growth,duckdb-star,5,false,145.165,143.798,1.132,0.223,96,6254
+clv-buckets,postgres-store,1,true,12888.953,12888.930,0.023,0.000,7,
+clv-buckets,postgres-store,1,false,12442.507,12442.485,0.022,0.000,7,
+clv-buckets,postgres-store,2,false,12305.086,12305.072,0.015,0.000,7,
+clv-buckets,postgres-store,3,false,12368.767,12368.745,0.022,0.000,7,
+clv-buckets,postgres-store,4,false,12331.623,12331.608,0.015,0.000,7,
+clv-buckets,postgres-store,5,false,12380.029,12380.008,0.021,0.000,7,
+clv-buckets,duckdb-store,1,true,899.492,898.141,1.250,0.092,7,2267
+clv-buckets,duckdb-store,1,false,756.402,755.286,1.038,0.070,7,2268
+clv-buckets,duckdb-store,2,false,767.392,766.351,0.958,0.074,7,2268
+clv-buckets,duckdb-store,3,false,737.228,736.151,0.989,0.079,7,2268
+clv-buckets,duckdb-store,4,false,753.500,752.092,1.313,0.083,7,2268
+clv-buckets,duckdb-store,5,false,760.626,759.602,0.922,0.087,7,2267
+clv-buckets,postgres-star,1,true,9132.637,9132.616,0.021,0.000,7,
+clv-buckets,postgres-star,1,false,8619.372,8619.357,0.015,0.000,7,
+clv-buckets,postgres-star,2,false,8653.922,8653.907,0.015,0.000,7,
+clv-buckets,postgres-star,3,false,8608.320,8608.305,0.015,0.000,7,
+clv-buckets,postgres-star,4,false,8634.056,8634.041,0.015,0.000,7,
+clv-buckets,postgres-star,5,false,8641.523,8641.509,0.014,0.000,7,
+clv-buckets,duckdb-star,1,true,217.048,215.795,1.170,0.074,7,1388
+clv-buckets,duckdb-star,1,false,196.986,195.792,1.112,0.073,7,1389
+clv-buckets,duckdb-star,2,false,192.852,191.801,0.971,0.072,7,1389
+clv-buckets,duckdb-star,3,false,192.664,191.538,1.046,0.071,7,1388
+clv-buckets,duckdb-star,4,false,194.800,192.655,2.050,0.084,7,1389
+clv-buckets,duckdb-star,5,false,193.734,192.621,1.014,0.089,7,1389
+detail-extract,postgres-store,1,true,291.714,237.050,54.664,0.000,42581,
+detail-extract,postgres-store,1,false,275.208,239.844,35.364,0.000,42581,
+detail-extract,postgres-store,2,false,375.674,253.496,122.178,0.000,42581,
+detail-extract,postgres-store,3,false,280.171,236.515,43.656,0.000,42581,
+detail-extract,postgres-store,4,false,267.997,241.459,26.538,0.000,42581,
+detail-extract,postgres-store,5,false,425.277,229.051,196.226,0.000,42581,
+detail-extract,duckdb-store,1,true,513.048,212.937,21.373,276.665,42581,4210719
+detail-extract,duckdb-store,1,false,550.341,292.561,3.500,253.649,42581,4210710
+detail-extract,duckdb-store,2,false,383.982,257.991,4.234,120.415,42581,4210719
+detail-extract,duckdb-store,3,false,460.522,223.691,3.451,231.984,42581,4210709
+detail-extract,duckdb-store,4,false,555.197,299.193,4.856,249.829,42581,4210720
+detail-extract,duckdb-store,5,false,338.729,237.024,4.326,96.848,42581,4210719
+detail-extract,postgres-star,1,true,191.373,146.175,45.199,0.000,42581,
+detail-extract,postgres-star,1,false,180.601,67.808,112.792,0.000,42581,
+detail-extract,postgres-star,2,false,109.510,65.491,44.018,0.000,42581,
+detail-extract,postgres-star,3,false,101.322,64.987,36.335,0.000,42581,
+detail-extract,postgres-star,4,false,109.449,65.958,43.491,0.000,42581,
+detail-extract,postgres-star,5,false,98.266,66.514,31.752,0.000,42581,
+detail-extract,duckdb-star,1,true,290.070,46.893,5.383,236.185,42581,4209560
+detail-extract,duckdb-star,1,false,250.340,80.382,4.480,164.783,42581,4209549
+detail-extract,duckdb-star,2,false,323.700,76.796,3.429,242.122,42581,4209549
+detail-extract,duckdb-star,3,false,168.917,64.061,3.302,100.914,42581,4209549
+detail-extract,duckdb-star,4,false,225.673,69.607,3.611,151.204,42581,4209549
+detail-extract,duckdb-star,5,false,238.870,59.876,4.206,173.586,42581,4209560
+customer-orders,postgres-store,1,true,2.132,2.092,0.040,0.000,7,
+customer-orders,postgres-store,1,false,0.773,0.751,0.023,0.000,7,
+customer-orders,postgres-store,2,false,0.703,0.678,0.025,0.000,7,
+customer-orders,postgres-store,3,false,0.689,0.669,0.019,0.000,7,
+customer-orders,postgres-store,4,false,0.707,0.679,0.027,0.000,7,
+customer-orders,postgres-store,5,false,0.691,0.661,0.029,0.000,7,
+customer-orders,duckdb-store,1,true,12.876,11.119,1.622,0.124,7,1246
+customer-orders,duckdb-store,1,false,10.025,9.280,0.636,0.101,7,1244
+customer-orders,duckdb-store,2,false,9.586,8.918,0.564,0.094,7,1245
+customer-orders,duckdb-store,3,false,9.492,8.821,0.583,0.079,7,1244
+customer-orders,duckdb-store,4,false,12.359,11.658,0.612,0.075,7,1245
+customer-orders,duckdb-store,5,false,10.253,9.503,0.658,0.071,7,1244
+customer-orders,postgres-star,1,true,3.074,3.051,0.023,0.000,7,
+customer-orders,postgres-star,1,false,0.426,0.397,0.029,0.000,7,
+customer-orders,postgres-star,2,false,0.417,0.387,0.030,0.000,7,
+customer-orders,postgres-star,3,false,0.415,0.392,0.022,0.000,7,
+customer-orders,postgres-star,4,false,0.445,0.419,0.026,0.000,7,
+customer-orders,postgres-star,5,false,0.457,0.428,0.028,0.000,7,
+customer-orders,duckdb-star,1,true,6.812,6.055,0.666,0.077,7,754
+customer-orders,duckdb-star,1,false,3.397,2.753,0.580,0.056,7,755
+customer-orders,duckdb-star,2,false,3.374,2.776,0.520,0.061,7,755
+customer-orders,duckdb-star,3,false,3.554,2.932,0.541,0.072,7,755
+customer-orders,duckdb-star,4,false,3.521,2.863,0.561,0.089,7,755
+customer-orders,duckdb-star,5,false,3.643,3.029,0.551,0.055,7,755

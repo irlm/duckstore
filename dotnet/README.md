@@ -9,7 +9,7 @@ The same store as the Go project, in C#, as **two ASP.NET Core services** that l
 | `DuckStore.Contracts` | The records both services exchange as JSON | |
 
 For the user it is one application. Underneath, each part runs where it works best, and the **Compare** page
-runs the same 15 questions both ways so you can see what each way costs.
+runs 15 questions four ways (two engines × two data models) so you can see what each part is worth.
 
 ```mermaid
 flowchart LR
@@ -41,6 +41,7 @@ You only need Docker. From the `duckstore` folder:
 ```bash
 make docker-up      # build and start postgres, analytics and web
 make docker-seed    # load the fake store data (SCALE=5 by default) and build the warehouse
+make docker-star    # optional: copy the star schema into Postgres, for the Compare page's fourth approach
 ```
 
 Then open:
@@ -54,11 +55,13 @@ Without `make`:
 docker compose up -d --build
 docker compose run --rm seed -scale 5                # the seed image is a small Go binary; no Go install needed
 docker compose run --rm --no-deps analytics etl      # or press "Run ETL now" on the ETL page
+docker compose run --rm --no-deps analytics star-to-postgres
 ```
 
 On the test laptop, scale 5 (12.5M orders, 26.5M order lines) took about **3 minutes** to seed (about 10 GB
-in Postgres) and **68 seconds** to build the warehouse (a 2.6 GB DuckDB file). `make docker-seed SCALE=1`
-is five times smaller.
+in Postgres) and **68 seconds** to build the warehouse (a 2.6 GB DuckDB file). Copying the star schema into
+Postgres took **3 minutes** (DuckDB moved 42M rows in about a minute; keys, indexes and VACUUM ANALYZE took the
+rest). `make docker-seed SCALE=1` is five times smaller.
 
 Other commands:
 
@@ -93,23 +96,35 @@ In Development, EF Core prints every SQL statement it runs to the terminal.
 
 ## The Compare page
 
-Each question runs two ways:
+Each question can run **four ways**: two engines on two data models.
 
-- **Postgres direct**: the web app sends SQL to Postgres over the Postgres protocol, on the normalized store tables.
-- **DuckDB service**: the web app sends an HTTP request to the analytics service, which runs SQL on its DuckDB
-  file (star schema) and returns the rows as JSON.
+| | Store tables: normalized, as the application writes them | Star schema: facts and dimensions built by the ETL |
+|---|---|---|
+| **Postgres** | `store.*`, sent by the web app over the Postgres protocol | `dw.*`, a copy made by `make docker-star` |
+| **DuckDB** | `raw.*`, the ETL's copy of the store tables, through the analytics service | `dw.*`, through the analytics service |
 
-The two answers must be equal, so the Postgres SQL only counts orders up to the warehouse **watermark** (the
-last order id the ETL copied). The page compares both results row by row, with a tolerance of one cent for money.
+- On the **store tables**, both engines run the **same SQL text** (see [analytics/README.md](../analytics/README.md)),
+  so the difference is the **engine**.
+- On the **same engine**, store tables vs star schema shows what the **data model** is worth: the ETL did the joins
+  and the currency conversion once, instead of in every query.
+- Postgres runs go from the web app straight to Postgres. DuckDB runs go over HTTP to the analytics service and come
+  back as JSON, so their times include the service boundary.
 
-**Measuring.** One run can be unlucky: a cold cache, or another program busy for a moment. Choose a warm-up
-run and 3-7 timed runs, and the page shows the **median** run (half of the runs were faster, half slower),
-plus the fastest and the slowest. The two approaches take turns (Postgres, DuckDB, Postgres, ...), so a slow
-moment on the machine hits both.
+All four answers must be equal. The store SQL only counts orders up to the warehouse **watermark** (the last order id
+the ETL copied), and the star schema copy in Postgres remembers the watermark it was made from: after a new ETL, the
+page asks you to run `make docker-star` again. The page compares the results row by row, with a tolerance of one
+cent for money.
+
+**Measuring.** One run can be unlucky: a cold cache, or another program busy for a moment. Choose a warm-up run and
+3-7 timed runs, and the page shows the **median** run (half of the runs were faster, half slower), plus the fastest
+and the slowest. The approaches take turns (1, 2, 3, 4, 1, 2, ...), so a slow moment on the machine hits all of them.
+
+**Plans.** Every panel has a **Plan** button: the estimated plan (`EXPLAIN`, the query does not run) or the actual
+plan (`EXPLAIN ANALYZE`, it runs), with a short guide to reading that engine's plan in SQL Server terms.
 
 **Where the time goes.** Each run is split into phases:
 
-| Phase | Postgres direct | DuckDB service |
+| Phase | Postgres | DuckDB |
 |---|---|---|
 | **Database** | From sending the query until the first row arrives. For a small result this is almost everything. | Measured inside the service: executing until the first row, then reading the other rows. |
 | **Network** | Reading the other rows from the connection and decoding them. | The HTTP time seen by the web app minus the service's own phases (sent in a `Server-Timing` header). It includes the network, Kestrel and HttpClient. |
@@ -117,53 +132,66 @@ moment on the machine hits both.
 
 ### Results at scale 5
 
-Median of 5 runs after 1 warm-up run; the fastest and slowest run in brackets. Measured with
-`compare --runs 5 --warmup 1` inside the web container on an AMD Ryzen 7 5825U (8 cores / 16 threads), 28 GB RAM,
-NVMe SSD, all three containers on the same laptop. Data: scale 5 = 1.5M customers, 150k products, 12.5M orders,
-26.5M order lines. Postgres 18 with the settings in `docker-compose.yml` (up to 8 parallel workers per query),
-DuckDB 1.5.5 with 16 threads and a 6 GB memory limit. All 15 results were equal on both sides.
+Median of 5 runs after 1 warm-up run, measured with `compare --runs 5 --warmup 1` inside the web container on an
+AMD Ryzen 7 5825U (8 cores / 16 threads), 28 GB RAM, NVMe SSD, all three containers on the same laptop. Data: scale 5
+= 1.5M customers, 150k products, 12.5M orders, 26.5M order lines. Postgres 18 with the settings in
+`docker-compose.yml` (up to 8 parallel workers per query), DuckDB 1.5.5 with 16 threads and a 6 GB memory limit.
+**All 15 questions gave the same result in all four approaches.** Every run is in
+[docs/results/compare-scale5.csv](../docs/results/compare-scale5.csv).
 
-| Question | Postgres direct | DuckDB service | Network + JSON inside the DuckDB time | Faster |
-|---|---:|---:|---:|---|
-| Year-over-year growth by department | 49.2 s (48.7-49.7) | 130 ms (129-141) | 1.7 ms | DuckDB, 378× |
-| Unusual days | 2.04 s (2.00-2.10) | 7.5 ms (7.4-7.5) | 1.0 ms | DuckDB, 273× |
-| Revenue per month | 36.5 s (35.8-38.3) | 277 ms (271-282) | 2.3 ms | DuckDB, 132× |
-| Top 3 products per department | 26.5 s (26.2-26.5) | 419 ms (408-453) | 1.8 ms | DuckDB, 63× |
-| Customer lifetime value buckets | 12.2 s (12.1-12.5) | 194 ms (192-201) | 1.1 ms | DuckDB, 63× |
-| Revenue by sales leader | 7.65 s (7.55-7.69) | 142 ms (135-149) | 1.4 ms | DuckDB, 54× |
-| Products bought together | 11.4 s (11.3-11.4) | 241 ms (236-245) | 2.9 ms | DuckDB, 47× |
-| Cohort retention | 19.3 s (19.2-19.4) | 451 ms (443-474) | 2.2 ms | DuckDB, 43× |
-| Delivery time percentiles | 12.9 s (12.8-13.2) | 308 ms (304-324) | 1.2 ms | DuckDB, 42× |
-| RFM customer segments | 14.7 s (14.6-14.8) | 427 ms (404-431) | 1.8 ms | DuckDB, 35× |
-| Revenue by category with subtotals | 62.5 s (62.1-62.7) | 2.52 s (2.44-2.65) | 2.3 ms | DuckDB, 25× |
-| Return rate by brand | 4.62 s (4.59-4.63) | 230 ms (220-237) | 1.5 ms | DuckDB, 20× |
-| Active customers per month | 2.96 s (2.93-3.06) | 209 ms (201-215) | 1.5 ms | DuckDB, 14× |
-| All order lines of one day (42,581 rows, 4.1 MB of JSON) | 264 ms (247-310) | 283 ms (200-337) | 227 ms | about equal |
-| One customer's latest orders (lookup by key) | **0.9 ms** (0.9-1.2) | 5.2 ms (4.6-7.2) | 0.8 ms | Postgres, 5.7× |
-
-Every run is in [docs/results/compare-scale5.csv](../docs/results/compare-scale5.csv).
+| Question | Postgres · store | DuckDB · store | Postgres · star | DuckDB · star | Engine, store tables | Engine, star schema | Model, Postgres | Model, DuckDB |
+|---|---:|---:|---:|---:|---|---|---|---|
+| Revenue per month | 36.6 s | 2.43 s | 6.62 s | 281 ms | DuckDB 15× | DuckDB 24× | star 5.5× | star 8.7× |
+| Revenue by category with subtotals | 63.0 s | 12.0 s | 20.7 s | 2.51 s | DuckDB 5.3× | DuckDB 8.3× | star 3.0× | star 4.8× |
+| Active customers per month | 2.96 s | 865 ms | 3.05 s | 204 ms | DuckDB 3.4× | DuckDB 15× | about equal | star 4.2× |
+| Cohort retention | 19.5 s | 1.90 s | 21.7 s | 442 ms | DuckDB 10× | DuckDB 49× | store 1.1× | star 4.3× |
+| RFM customer segments | 14.8 s | 1.44 s | 12.6 s | 426 ms | DuckDB 10× | DuckDB 30× | star 1.2× | star 3.4× |
+| Top 3 products per department | 25.9 s | 4.03 s | 2.90 s | 443 ms | DuckDB 6.4× | DuckDB 6.6× | star 8.9× | star 9.1× |
+| Products bought together | 11.3 s | 544 ms | 7.44 s | 237 ms | DuckDB 21× | DuckDB 31× | star 1.5× | star 2.3× |
+| Return rate by brand | 4.72 s | 416 ms | 2.93 s | 227 ms | DuckDB 11× | DuckDB 13× | star 1.6× | star 1.8× |
+| Delivery time percentiles | 13.0 s | 6.61 s | 12.8 s | 320 ms | DuckDB 2.0× | DuckDB 40× | about equal | star 21× |
+| Revenue by sales leader | 8.16 s | 871 ms | 990 ms | 145 ms | DuckDB 9.4× | DuckDB 6.8× | star 8.2× | star 6.0× |
+| Unusual days | 2.06 s | 308 ms | 183 ms | 7.7 ms | DuckDB 6.7× | DuckDB 24× | star 11× | star 40× |
+| Year-over-year growth by department | 49.7 s | 15.3 s | 2.82 s | 159 ms | DuckDB 3.2× | DuckDB 18× | star 18× | star 96× |
+| Customer lifetime value buckets | 12.4 s | 756 ms | 8.63 s | 194 ms | DuckDB 16× | DuckDB 45× | star 1.4× | star 3.9× |
+| All order lines of one day (42,581 rows) | 280 ms | 461 ms | **109 ms** | 239 ms | Postgres 1.6× | Postgres 2.2× | star 2.6× | star 1.9× |
+| One customer's latest orders (lookup) | 0.7 ms | 10.0 ms | **0.4 ms** | 3.5 ms | Postgres 14× | Postgres 9× | star 1.7× | star 2.8× |
 
 What the numbers say:
 
-- **Analytics: DuckDB is 14-378× faster, even behind HTTP.** The service boundary (network plus JSON) costs
-  1-3 ms per question, less than 1% of the DuckDB time and nothing next to the Postgres time.
-- **But the gap mixes two things:** the **engine** (column store, vectorized, all cores) and the **data model**.
-  Postgres converts every order line to USD with an exchange-rate calendar it builds in each query; the star
-  schema has the USD amount ready, because the ETL did that work once. The Go engine race measures the two
-  separately on 5 of these questions at scale 1 ([README](../README.md#analytics-scan-join-aggregate)): the
-  engine alone gave 3-25×, the star schema another 2-15×.
-- **Large results: the format decides, not the engine.** DuckDB found the 42,581 rows in 55 ms, then JSON took
-  223 ms (serializing in the service, parsing in the web app). Postgres sent the same rows in its binary protocol
-  in 44 ms. For big results, use a binary format (Arrow, Parquet) or keep the work next to the data.
-- **Lookups by key: Postgres wins.** Its index finds one customer's orders in 0.9 ms. DuckDB needs 4.5 ms: the
-  fact table is sorted by date, so zone maps cannot skip blocks for a customer, and DuckDB scans all 12.5M
-  `customer_id` values on 16 threads. HTTP adds under 1 ms.
-- **Repeat small measurements.** Most analytics runs were within a few percent of their median, but the lookup
-  and the large result varied by up to 40% between runs. One run of those would be a guess.
+- **Both the engine and the data model matter, and they multiply.** For the 13 analytics questions, the slowest
+  way (Postgres on the store tables) and the fastest way (DuckDB on the star schema) are 14-312× apart. The engine
+  alone, with the same SQL on the same tables, gave 2-21×. The star schema alone gave up to 18× on Postgres and up
+  to 96× on DuckDB.
+- **The star schema helps DuckDB on every question, Postgres only on some.** Postgres gained where the star schema
+  removed work that dominates in a row store: currency conversion for every order line (revenue per month 5.5×,
+  year-over-year 18×), a recursive walk of the org chart (sales leaders 8.2×), grouping by an expression
+  (`placed_at::date`, unusual days 11×), and a date filter an index can serve. Where the query must read every row
+  of a table anyway (active customers, cohort retention), Postgres gained nothing: a row store reads whole rows,
+  and `dw.fact_orders` has 29 columns where `store.orders` has 13. DuckDB reads only the 2-3 columns it needs.
+- **A good model can beat a faster engine.** Postgres on the star schema beat DuckDB on the store tables for top
+  products (2.90 s vs 4.03 s), year-over-year growth (2.82 s vs 15.3 s) and unusual days (183 ms vs 308 ms). The
+  plan of top products shows why: Postgres reads only the last 12 months through the `order_date` index, and the
+  window function stops after 3 rows per department (`Run Condition` in the plan).
+- **The same SQL is not always good SQL for both engines.** On the store tables DuckDB was only 2× faster for
+  delivery percentiles. Its plan shows where the time goes: `extract(epoch FROM delivered_at - shipped_at)`.
+  Subtracting two `timestamptz` values uses time-zone calendar arithmetic for every row in DuckDB, while in Postgres
+  it is a cheap integer subtraction. On the scale-1 shipments, that expression took 1.10 s in DuckDB, and
+  `extract(epoch FROM delivered_at) - extract(epoch FROM shipped_at)` took 19 ms for the same sum. The star schema
+  avoided the problem because the ETL already chose each order's last parcel.
+- **Large results and lookups: Postgres.** For all order lines of one day, 169 ms of DuckDB's 239 ms is network and
+  JSON (4.2 MB). Postgres sends the rows in its binary protocol and wins. For one customer's orders, a B-tree index
+  answers in under 1 ms; DuckDB scans a column (the fact table is sorted by date, so zone maps cannot skip blocks for
+  a customer).
+- **The service boundary is cheap for small results.** Network plus JSON took 1-5 ms per analytics question, less
+  than 1% of the DuckDB time for most of them.
+- **Repeat small measurements.** For the analytics questions, the fastest and the slowest of the 5 runs were less than
+  10% apart in 45 of 52 cases (27% at most). For the large result and the lookup they were up to 75% apart: one run
+  of those would be a guess.
 
-Limits of this measurement: one machine, so the "network" is a Docker bridge, much faster than a real network,
-and the containers share the same cores and memory; one user at a time; Postgres without partitioning, summary
-tables or columnar storage.
+Limits of this measurement: one machine, so the "network" is a Docker bridge, much faster than a real network, and
+the containers share the same cores and memory; one user at a time; Postgres without partitioning or columnar
+storage.
 
 ### The same measurement in the terminal
 
@@ -171,6 +199,7 @@ tables or columnar storage.
 make docker-compare
 # or with options:
 docker compose exec web dotnet DuckStore.Web.dll compare --runs 5 --warmup 1 --csv /tmp/runs.csv monthly-revenue customer-orders
+docker compose exec web dotnet DuckStore.Web.dll compare --approaches duckdb-store,duckdb-star    # only some approaches
 ```
 
 `--csv` writes one row per run (warm-up runs too). DuckDB reads the file directly, so you can analyze the
@@ -222,6 +251,9 @@ Design decisions worth reading in the code:
 | DuckDB lives only in the analytics service | One process owns the file, so there is one place for the ETL, the lock and the reopen logic. The web app has no DuckDB dependency and can be scaled or deployed on its own. The price is a network hop plus JSON on every call (measured on the Compare page). |
 | A shared `Contracts` project | Both services compile against the same records, so a changed field breaks the build, not production. |
 | `Server-Timing` header on analytics responses | The service reports its own execute, read and serialize times. The web app subtracts them from what it measured, so what is left is network and HTTP overhead. |
+| DuckDB copies the star schema into Postgres (`etl/postgres-star/`) | DuckDB's postgres extension writes with Postgres' binary COPY, so a few lines of SQL move 42M rows in about a minute. Postgres then adds the keys and indexes a DBA would add, and `VACUUM ANALYZE` like the seed does, so the Postgres star schema is not handicapped. |
+| The warehouse reader sets `TimeZone = 'UTC'` | Casting a `timestamptz` to a date cuts the day at midnight of the session's time zone. Outside Docker the laptop's zone gave different days than the ETL and Postgres; all 15 questions differed until this was set. |
+| The store SQL casts rounded USD amounts to `numeric(14,2)` | DuckDB divides a DECIMAL by a DECIMAL into a DOUBLE. Summing doubles made one customer's lifetime total 999.99999... instead of 1,000.00, which moved them to another bucket. Postgres `numeric` is exact; the cast makes both engines exact, as the ETL already does. |
 | One folder of SQL per Compare question ([analytics/README.md](../analytics/README.md)) | `store.sql` runs on both engines (DuckDB reads the ETL's `raw.*` copy), so the store tables isolate the engine. The star schema has `star.sql`, or one file per engine when the dialects differ. All versions return the same columns, so the results can be compared cell by cell. |
 | Postgres SQL is bounded by the watermark | Postgres has orders that the warehouse does not have yet. Without the bound the answers would differ for the wrong reason. |
 | EF Core for CRUD, Dapper for reports | EF Core shines at loading and saving entities. Reports are SQL written by hand for DuckDB (PIVOT, QUALIFY, ASOF), so a thin mapper is better. |
