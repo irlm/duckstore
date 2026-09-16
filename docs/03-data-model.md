@@ -64,7 +64,7 @@ needs the exchange rate of the order date, and exchange rates only exist for bus
 ## The warehouse (DuckDB, schemas `raw` and `dw`)
 
 `raw.*` holds untouched copies of the store tables (used by the race to compare engines on the same model).
-`dw.*` is a star schema built by [the ETL](../internal/warehouse/etl/).
+`dw.*` is a star schema built by [the ETL](../etl/).
 
 ```mermaid
 erDiagram

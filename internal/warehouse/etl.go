@@ -4,7 +4,6 @@ package warehouse
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,12 +16,10 @@ import (
 
 	"github.com/duckdb/duckdb-go/v2"
 
+	"github.com/irlm/duckstore/etl"
 	"github.com/irlm/duckstore/internal/config"
 	"github.com/irlm/duckstore/internal/sqlsplit"
 )
-
-//go:embed etl/*.sql
-var etlFS embed.FS
 
 type Step struct {
 	Label    string
@@ -119,12 +116,12 @@ func Build(ctx context.Context, cfg config.Config, onStep func(Step)) (*BuildRes
 		return nil, fmt.Errorf("read watermark: %w", err)
 	}
 
-	files, err := fs.Glob(etlFS, "etl/*.sql")
+	files, err := fs.Glob(etl.FS, "*.sql")
 	if err != nil {
 		return nil, err
 	}
 	for _, f := range files { // Glob returns sorted names: 01_, 02_, ...
-		script, err := etlFS.ReadFile(f)
+		script, err := etl.FS.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}

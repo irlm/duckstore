@@ -152,7 +152,7 @@ If `make up` says `permission denied ... docker.sock`, add yourself to the docke
 The SQL itself is meant to be read:
 
 - [internal/pg/schema/](internal/pg/schema/): the Postgres schema, keys and indexes
-- [internal/warehouse/etl/](internal/warehouse/etl/): the whole ETL in four SQL files
+- [etl/](etl/): the whole ETL in four SQL files, run by both the Go and the .NET version
 - [internal/bench/scenarios.go](internal/bench/scenarios.go): every race question on both engines
 - [internal/web/store.go](internal/web/store.go) and [checkout.go](internal/web/checkout.go): the OLTP queries and transactions
 - [internal/web/analytics.go](internal/web/analytics.go): the dashboard questions
