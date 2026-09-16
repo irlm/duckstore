@@ -1,27 +1,38 @@
+using DuckStore.Web.Api;
 using DuckStore.Web.Components;
+using DuckStore.Web.Data;
+using DuckStore.Web.Services;
+using Microsoft.EntityFrameworkCore;
+using MudBlazor.Services;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+// Postgres (OLTP): EF Core, one short-lived DbContext per operation.
+builder.Services.AddDbContextFactory<StoreDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Store")));
+builder.Services.AddSingleton<ProductService>();
+
+// API: OpenAPI document + Scalar UI at /scalar, errors as ProblemDetails.
+builder.Services.AddOpenApi();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ErrorHandler>();
+
+// UI: Blazor (interactive server rendering) + MudBlazor components.
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddMudServices();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-    app.UseHsts();
-}
+app.UseExceptionHandler();
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
-
 app.UseAntiforgery();
 
+app.MapOpenApi();
+app.MapScalarApiReference();
+app.MapProductEndpoints();
+
 app.MapStaticAssets();
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
