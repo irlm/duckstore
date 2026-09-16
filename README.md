@@ -22,7 +22,12 @@ flowchart LR
     PG -.->|"live queries through<br/>ATTACH (hybrid)"| AN
 ```
 
-Everything runs from one Go binary. Postgres runs in Docker; DuckDB runs **inside** the Go process (it is a library, not a server).
+There are two implementations over the same databases and the same SQL files:
+
+- **Go**: one binary with the store, the analytics dashboard, the engine race and the SQL console.
+  DuckDB runs **inside** the Go process (it is a library, not a server).
+- **.NET**: a Blazor app plus a separate DuckDB **analytics service**, all in Docker, with a **Compare** page
+  that runs 15 questions on Postgres and through the service and shows where the time goes.
 
 ## Results on a laptop
 
@@ -81,19 +86,40 @@ What the numbers say:
 Most real systems use **both**, like this project: Postgres runs the store, DuckDB answers the analytics,
 and DuckDB can even read Postgres live when a question needs fresh data.
 
-## The same store in C# (ASP.NET Core)
+## The .NET version in Docker: Postgres direct vs a DuckDB service
 
-[dotnet/](dotnet/) has an ASP.NET Core app over the same databases: product CRUD on Postgres with EF Core,
-reports on DuckDB with DuckDB.NET and Dapper, the ETL in C# (running the same SQL files in [etl/](etl/)),
-a Blazor + MudBlazor UI and a REST API. Its README also answers **"do we need both backends?"**
-(short answer: no, the .NET app alone is enough; Go only generates the fake data).
+[dotnet/](dotnet/) runs as three containers:
+
+| Container | What runs there |
+|---|---|
+| `postgres` | the store database |
+| `analytics` | an ASP.NET Core service that owns the DuckDB file: the ETL (same SQL files as Go, in [etl/](etl/)), reports and analytics over HTTP |
+| `web` | the Blazor + MudBlazor app: product CRUD with EF Core, reports, the ETL page, and the **Compare** page |
 
 ```bash
-make dotnet-etl     # build the warehouse with the C# ETL
-make dotnet-run     # http://127.0.0.1:5085
+make docker-up      # build and start the three containers (needs only Docker)
+make docker-seed    # 12.5M orders (SCALE=5) and the warehouse; about 4 minutes
+# open http://127.0.0.1:5085/compare
 ```
 
-## Quick start
+The Compare page runs the same question two ways, checks that the results are equal, repeats the runs and
+shows the median, split into database, network and JSON time. Selected results at scale 5:
+
+| Question | Postgres direct | DuckDB service | Faster |
+|---|---:|---:|---|
+| Year-over-year growth by department | 49.2 s | 130 ms | DuckDB, 378× |
+| Revenue per month in USD | 36.5 s | 277 ms | DuckDB, 132× |
+| Active customers per month | 2.96 s | 209 ms | DuckDB, 14× |
+| All order lines of one day (42,581 rows) | 264 ms | 283 ms | about equal: 223 ms of it is JSON |
+| One customer's latest orders (lookup by key) | **0.9 ms** | 5.2 ms | Postgres, 5.7× |
+
+Medians of 5 runs on the same laptop, 12.5M orders, 26.5M order lines. The HTTP hop between the containers
+costs 1-3 ms per question.
+
+Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
+**"one backend or two?"**
+
+## Quick start (Go version)
 
 Requirements: Docker, Go 1.26+, a C compiler (DuckDB is linked with CGO), and internet access the first
 time (DuckDB downloads its `postgres` extension once).
@@ -162,8 +188,12 @@ The SQL itself is meant to be read:
 ## Project layout
 
 ```
+analytics/              the 15 Compare questions: <id>.postgres.sql and <id>.duckdb.sql
 cmd/duckstore/          the binary: seed, etl, serve, bench, sql
-dotnet/                 the ASP.NET Core version (Blazor UI, EF Core, DuckDB.NET)
+cmd/seed/               seed only, without DuckDB (used by the Docker seed image)
+docker/                 Dockerfiles: seed, analytics, web
+dotnet/                 the ASP.NET Core version: web app + analytics service
+etl/                    the ETL SQL, run by both the Go and the .NET version
 internal/config/        settings from environment variables
 internal/pg/            Postgres connection and schema files
 internal/seed/          fake data generator (deterministic, bulk COPY)
