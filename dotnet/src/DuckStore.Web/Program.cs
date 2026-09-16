@@ -2,6 +2,7 @@ using DuckStore.Web.Api;
 using DuckStore.Web.Components;
 using DuckStore.Web.Data;
 using DuckStore.Web.Services;
+using DuckStore.Web.Warehouse;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor.Services;
 using Scalar.AspNetCore;
@@ -12,6 +13,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContextFactory<StoreDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Store")));
 builder.Services.AddSingleton<ProductService>();
+
+// DuckDB (OLAP): the warehouse file built by `make etl`, read-only, with Dapper.
+builder.Services.AddSingleton<DuckDbWarehouse>();
+builder.Services.AddSingleton<ReportService>();
 
 // API: OpenAPI document + Scalar UI at /scalar, errors as ProblemDetails.
 builder.Services.AddOpenApi();
@@ -31,6 +36,7 @@ app.UseAntiforgery();
 app.MapOpenApi();
 app.MapScalarApiReference();
 app.MapProductEndpoints();
+app.MapReportEndpoints();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

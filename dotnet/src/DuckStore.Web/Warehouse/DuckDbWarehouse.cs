@@ -1,0 +1,93 @@
+using Dapper;
+using DuckDB.NET.Data;
+
+namespace DuckStore.Web.Warehouse;
+
+// Read-only access to the DuckDB warehouse built by the ETL (`make etl`).
+//
+// DuckDB is a library: there is no server to connect to. This class keeps one
+// in-memory DuckDB instance with the warehouse file attached READ_ONLY:
+//
+//     root (Data Source=:memory:)
+//       └── ATTACH '.../warehouse.duckdb' AS wh (READ_ONLY)
+//
+// Every query gets its own connection with root.Duplicate() (about 0.4 ms)
+// instead of opening the file again (about 13 ms).
+//
+// The ETL writes a NEW file and renames it over the old one. When the file
+// changes, the next query opens a new root on the new file. Queries still
+// running on the old root finish normally: a duplicate keeps the old instance
+// alive until it is disposed.
+public sealed class DuckDbWarehouse : IDisposable
+{
+    private readonly string _path;
+    private readonly int _threads;
+    private readonly ILogger<DuckDbWarehouse> _log;
+    private readonly Lock _gate = new();
+    private DuckDBConnection? _root;
+    private (DateTime WrittenAt, long Length) _stamp;
+
+    public DuckDbWarehouse(IConfiguration config, IHostEnvironment env, ILogger<DuckDbWarehouse> log)
+    {
+        _path = Path.GetFullPath(Path.Combine(env.ContentRootPath, config["Warehouse:Path"] ?? "../../../data/warehouse.duckdb"));
+        _threads = config.GetValue("Warehouse:Threads", 0);
+        _log = log;
+    }
+
+    public string FilePath => _path;
+
+    /// <summary>Opens a connection to the latest warehouse. Dispose it when done.</summary>
+    public async Task<DuckDBConnection> OpenAsync(CancellationToken ct = default)
+    {
+        var connection = CurrentRoot().Duplicate();
+        await connection.OpenAsync(ct);
+        await connection.ExecuteAsync("USE wh"); // so the SQL can say dw.fact_sales instead of wh.dw.fact_sales
+        return connection;
+    }
+
+    private DuckDBConnection CurrentRoot()
+    {
+        var file = new FileInfo(_path);
+        if (!file.Exists)
+        {
+            throw new WarehouseNotBuiltException(_path);
+        }
+        var stamp = (file.LastWriteTimeUtc, file.Length);
+
+        lock (_gate)
+        {
+            if (_root is not null && stamp == _stamp)
+            {
+                return _root;
+            }
+
+            var root = new DuckDBConnection("Data Source=:memory:");
+            root.Open();
+            root.Execute($"ATTACH '{_path.Replace("'", "''")}' AS wh (READ_ONLY)");
+            if (_threads > 0)
+            {
+                // DuckDB uses every core by default. In a web API that also serves
+                // CRUD requests, leave some cores for them.
+                root.Execute($"SET threads = {_threads}");
+            }
+
+            var old = _root;
+            (_root, _stamp) = (root, stamp);
+            old?.Dispose();
+            _log.LogInformation("Opened warehouse {Path} ({Megabytes:F0} MB, written {WrittenAt:u})", _path, file.Length / 1e6, file.LastWriteTimeUtc);
+            return root;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _root?.Dispose();
+            _root = null;
+        }
+    }
+}
+
+public sealed class WarehouseNotBuiltException(string path)
+    : Exception($"The warehouse file {path} does not exist yet. Run `make etl` in the duckstore folder.");
