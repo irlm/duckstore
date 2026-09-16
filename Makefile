@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-test
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-etl dotnet-test
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -43,6 +43,10 @@ test:
 ## dotnet-run: run the ASP.NET Core app (CRUD on Postgres, reports on DuckDB) on http://127.0.0.1:5085
 dotnet-run:
 	dotnet run --project dotnet/src/DuckStore.Web --launch-profile http
+
+## dotnet-etl: build the DuckDB warehouse with the C# ETL (same SQL files as `make etl`)
+dotnet-etl:
+	dotnet run --project dotnet/src/DuckStore.Web --launch-profile http -- etl
 
 ## dotnet-test: integration tests of the .NET app (needs `make up seed etl`)
 dotnet-test:

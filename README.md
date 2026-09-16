@@ -84,10 +84,12 @@ and DuckDB can even read Postgres live when a question needs fresh data.
 ## The same store in C# (ASP.NET Core)
 
 [dotnet/](dotnet/) has an ASP.NET Core app over the same databases: product CRUD on Postgres with EF Core,
-reports on DuckDB with DuckDB.NET and Dapper, a Blazor + MudBlazor UI and a REST API. Its README also answers
-**"do we need both backends?"** (short answer: no, one app with separate report endpoints is enough).
+reports on DuckDB with DuckDB.NET and Dapper, the ETL in C# (running the same SQL files in [etl/](etl/)),
+a Blazor + MudBlazor UI and a REST API. Its README also answers **"do we need both backends?"**
+(short answer: no, the .NET app alone is enough; Go only generates the fake data).
 
 ```bash
+make dotnet-etl     # build the warehouse with the C# ETL
 make dotnet-run     # http://127.0.0.1:5085
 ```
 
