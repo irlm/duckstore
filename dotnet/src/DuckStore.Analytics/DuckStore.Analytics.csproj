@@ -13,9 +13,10 @@
   <ItemGroup>
     <!-- SQL files live at the repository root and are compiled into this assembly:
          etl/ is the ETL (shared with the Go version), analytics/ holds the questions
-         of the Compare page (this service runs the *.duckdb.sql files). -->
+         of the Compare page. -->
     <EmbeddedResource Include="..\..\..\etl\*.sql" LogicalName="Etl.%(Filename)%(Extension)" Link="Sql\Etl\%(Filename)%(Extension)" />
-    <EmbeddedResource Include="..\..\..\analytics\*.duckdb.sql" LogicalName="Analytics.%(Filename)%(Extension)" Link="Sql\Analytics\%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\..\etl\postgres-star\*.sql" LogicalName="PostgresStar.%(Filename)%(Extension)" Link="Sql\PostgresStar\%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\..\analytics\**\*.sql" LogicalName="Analytics/%(RecursiveDir)%(Filename)%(Extension)" Link="Sql\Analytics\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

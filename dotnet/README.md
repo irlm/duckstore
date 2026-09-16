@@ -196,7 +196,8 @@ src/DuckStore.Analytics/        the analytics service
   Program.cs                    services, endpoints, `etl` and `install-extensions` commands
   Warehouse/DuckDbWarehouse.cs  opens the DuckDB file read-only, reopens it after an ETL
   Warehouse/ReportService.cs    report SQL (the same SQL as the Go dashboard)
-  Analytics/AnalyticsRunner.cs  runs analytics/<id>.duckdb.sql and times it
+  Analytics/AnalyticsRunner.cs  runs a question's SQL on DuckDB (store or star model) and times it
+  Etl/StarToPostgres.cs         copies the star schema into Postgres (etl/postgres-star/)
   Etl/WarehouseBuilder.cs       the ETL: lock, new file, ATTACH postgres, run etl/*.sql, Parquet, swap
   Etl/EtlService.cs             runs it in the background for the ETL page, the API and the schedule
   Api/                          minimal API endpoints and error mapping (ProblemDetails)
@@ -209,7 +210,7 @@ src/DuckStore.Web/              the web app
   Components/Pages/             Home, Products, Reports, Etl, Compare
 tests/DuckStore.Web.Tests/      product API tests over the real Postgres
 tests/DuckStore.Analytics.Tests/ ETL, lock, report and SQL splitter tests
-../analytics/                   <id>.postgres.sql and <id>.duckdb.sql for every Compare question
+../analytics/                   one folder per Compare question: store.sql, star.sql or star.<engine>.sql
 ../etl/                         the ETL SQL, shared with the Go version
 ../docker/                      Dockerfiles for seed, analytics and web
 ```
@@ -221,7 +222,7 @@ Design decisions worth reading in the code:
 | DuckDB lives only in the analytics service | One process owns the file, so there is one place for the ETL, the lock and the reopen logic. The web app has no DuckDB dependency and can be scaled or deployed on its own. The price is a network hop plus JSON on every call (measured on the Compare page). |
 | A shared `Contracts` project | Both services compile against the same records, so a changed field breaks the build, not production. |
 | `Server-Timing` header on analytics responses | The service reports its own execute, read and serialize times. The web app subtracts them from what it measured, so what is left is network and HTTP overhead. |
-| Every Compare question has two SQL files | Postgres reads the normalized tables and has no `ASOF JOIN`, so it builds a daily exchange-rate calendar. DuckDB reads the star schema. Both return the same columns, so the results can be compared cell by cell. |
+| One folder of SQL per Compare question ([analytics/README.md](../analytics/README.md)) | `store.sql` runs on both engines (DuckDB reads the ETL's `raw.*` copy), so the store tables isolate the engine. The star schema has `star.sql`, or one file per engine when the dialects differ. All versions return the same columns, so the results can be compared cell by cell. |
 | Postgres SQL is bounded by the watermark | Postgres has orders that the warehouse does not have yet. Without the bound the answers would differ for the wrong reason. |
 | EF Core for CRUD, Dapper for reports | EF Core shines at loading and saving entities. Reports are SQL written by hand for DuckDB (PIVOT, QUALIFY, ASOF), so a thin mapper is better. |
 | `IDbContextFactory`, one DbContext per operation | In Blazor Server a scoped service lives as long as the browser tab; one DbContext must not serve overlapping operations. |

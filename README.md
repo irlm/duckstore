@@ -188,7 +188,7 @@ The SQL itself is meant to be read:
 ## Project layout
 
 ```
-analytics/              the 15 Compare questions: <id>.postgres.sql and <id>.duckdb.sql
+analytics/              the 15 Compare questions: one folder each, SQL per data model and engine
 cmd/duckstore/          the binary: seed, etl, serve, bench, sql
 cmd/seed/               seed only, without DuckDB (used by the Docker seed image)
 docker/                 Dockerfiles: seed, analytics, web

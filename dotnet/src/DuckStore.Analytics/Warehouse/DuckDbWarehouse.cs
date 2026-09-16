@@ -66,6 +66,10 @@ public sealed class DuckDbWarehouse : IDisposable
             var root = new DuckDBConnection("Data Source=:memory:");
             root.Open();
             root.Execute($"ATTACH '{_path.Replace("'", "''")}' AS wh (READ_ONLY)");
+            // Like the ETL and Postgres: casting a timestamp with time zone to a date cuts the day
+            // at midnight UTC, not at midnight of the machine's time zone. GLOBAL: every duplicate
+            // connection gets it.
+            root.Execute("SET GLOBAL TimeZone = 'UTC'");
             if (_threads > 0)
             {
                 // DuckDB uses every core by default. Limit it when this service

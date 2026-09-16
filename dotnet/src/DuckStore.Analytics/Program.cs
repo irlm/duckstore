@@ -15,6 +15,7 @@ builder.Services.AddSingleton<DuckDbWarehouse>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<AnalyticsRunner>();
 builder.Services.AddSingleton<WarehouseBuilder>();
+builder.Services.AddSingleton<StarToPostgres>();
 builder.Services.AddSingleton<EtlService>();
 builder.Services.AddHostedService<EtlSchedule>();
 
@@ -29,6 +30,12 @@ switch (args)
     // `dotnet DuckStore.Analytics.dll etl`: build the warehouse once and exit.
     case ["etl", ..]:
         await app.Services.GetRequiredService<WarehouseBuilder>().BuildAsync();
+        return;
+
+    // `dotnet DuckStore.Analytics.dll star-to-postgres`: copy the warehouse's star schema into
+    // Postgres (schema dw) for the Compare page's "Postgres, star schema" approach, and exit.
+    case ["star-to-postgres", ..]:
+        await app.Services.GetRequiredService<StarToPostgres>().RunAsync();
         return;
 
     // `dotnet DuckStore.Analytics.dll install-extensions`: download the postgres

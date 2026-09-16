@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Reflection;
 using System.Text.Json;
 using DuckStore.Contracts;
 using Npgsql;
@@ -18,8 +16,32 @@ public enum PhaseKind
 
 public sealed record TimingPhase(string Name, double Ms, PhaseKind Kind);
 
-/// <summary>One way of answering a question, with where the time went.</summary>
-public sealed record ApproachRun(string Approach, AnalyticResult? Result, IReadOnlyList<TimingPhase> Phases, double TotalMs, long? PayloadBytes, string? Error)
+/// <summary>The four ways to answer a question: two engines × two data models.</summary>
+public enum Approach
+{
+    PostgresStore,
+    DuckDbStore,
+    PostgresStar,
+    DuckDbStar,
+}
+
+public sealed record ApproachInfo(Approach Id, string Name, string Slug, bool IsDuckDb, DataModel Model, string Path);
+
+public static class Approaches
+{
+    public static IReadOnlyList<ApproachInfo> All { get; } =
+    [
+        new(Approach.PostgresStore, "Postgres · store tables", "postgres-store", false, DataModel.Store, "web → Postgres: store.* tables"),
+        new(Approach.DuckDbStore, "DuckDB · store tables", "duckdb-store", true, DataModel.Store, "web → HTTP → analytics service → DuckDB: raw.* copy of the store tables"),
+        new(Approach.PostgresStar, "Postgres · star schema", "postgres-star", false, DataModel.Star, "web → Postgres: dw.* copy of the star schema"),
+        new(Approach.DuckDbStar, "DuckDB · star schema", "duckdb-star", true, DataModel.Star, "web → HTTP → analytics service → DuckDB: dw.* star schema"),
+    ];
+
+    public static ApproachInfo Info(this Approach approach) => All[(int)approach];
+}
+
+/// <summary>One run of one approach, with where the time went.</summary>
+public sealed record ApproachRun(Approach Approach, AnalyticResult? Result, IReadOnlyList<TimingPhase> Phases, double TotalMs, long? PayloadBytes, string? Error)
 {
     public double PhaseMs(PhaseKind kind) => Phases.Where(p => p.Kind == kind).Sum(p => p.Ms);
 }
@@ -28,7 +50,7 @@ public sealed record ApproachRun(string Approach, AnalyticResult? Result, IReadO
 /// Repeated runs of one approach. One run can be unlucky (a cold cache, another program busy),
 /// so the page and the CLI show the median run: half of the runs were faster, half slower.
 /// </summary>
-public sealed record ApproachSeries(string Approach, IReadOnlyList<ApproachRun> Runs, IReadOnlyList<ApproachRun> Warmups)
+public sealed record ApproachSeries(Approach Approach, IReadOnlyList<ApproachRun> Runs, IReadOnlyList<ApproachRun> Warmups)
 {
     public string? Error => Warmups.Concat(Runs).FirstOrDefault(r => r.Error is not null)?.Error;
 
@@ -41,33 +63,70 @@ public sealed record ApproachSeries(string Approach, IReadOnlyList<ApproachRun> 
 
 /// <param name="Runs">Timed runs; the median of them is shown.</param>
 /// <param name="Warmups">Runs before the timed ones that are not counted: they fill caches and open connections.</param>
-public sealed record MeasureOptions(int Runs = 1, int Warmups = 0, bool Postgres = true, bool DuckDb = true);
+/// <param name="Approaches">Which approaches to run; null = all that are available.</param>
+public sealed record MeasureOptions(int Runs = 1, int Warmups = 0, IReadOnlyCollection<Approach>? Approaches = null);
 
 /// <summary>What is running now, for progress text such as "run 2 of 5".</summary>
-public sealed record MeasureProgress(string Approach, int Run, int Of, bool Warmup);
-
-public sealed record QuestionMeasurement(string AnalyticId, ApproachSeries? Postgres, ApproachSeries? DuckDb)
-{
-    public ResultCheck? Check => Postgres?.Median?.Result is { } a && DuckDb?.Median?.Result is { } b ? ComparisonRunner.Check(a, b) : null;
-}
+public sealed record MeasureProgress(Approach Approach, int Run, int Of, bool Warmup);
 
 public sealed record ResultCheck(bool Same, string Message);
 
-public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse);
+public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<ApproachSeries> Series)
+{
+    public ApproachSeries? this[Approach approach] => Series.FirstOrDefault(s => s.Approach == approach);
 
-// Runs a Compare question two ways and checks that both give the same answer:
-//   Postgres direct:  web app --(Postgres protocol)--> Postgres
-//   DuckDB service:   web app --(HTTP + JSON)--> analytics service --> DuckDB file
+    /// <summary>How many times faster <paramref name="faster"/> was than <paramref name="slower"/> (medians).</summary>
+    public double? Speedup(Approach slower, Approach faster) =>
+        this[slower]?.Median is { TotalMs: > 0 } s && this[faster]?.Median is { TotalMs: > 0 } f ? s.TotalMs / f.TotalMs : null;
+
+    /// <summary>Every result is compared with the first one (in the order of <see cref="Approach"/>).</summary>
+    public ResultCheck? Check
+    {
+        get
+        {
+            var results = Series.Where(s => s.Median?.Result is not null).Select(s => (s.Approach, Result: s.Median!.Result!)).ToList();
+            if (results.Count < 2) return null;
+            var (firstApproach, first) = results[0];
+            foreach (var (approach, result) in results.Skip(1))
+            {
+                var check = ComparisonRunner.Check(firstApproach.Info().Name, first, approach.Info().Name, result);
+                if (!check.Same) return check;
+            }
+            return new(true, $"All {results.Count} results are the same: {first.RowCount:N0} rows × {first.Columns.Count} columns" +
+                (first.Truncated ? $" (first {first.Rows.Count:N0} compared)" : "") + ".");
+        }
+    }
+}
+
+/// <param name="MaxOrderId">The warehouse watermark, so every approach counts the same orders.</param>
+/// <param name="PostgresStarMaxOrderId">The watermark of the star schema copy in Postgres (null = no copy).</param>
+public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId)
+{
+    public bool PostgresStarReady => PostgresStarMaxOrderId == MaxOrderId;
+
+    public string? Unavailable(Approach approach) => approach switch
+    {
+        Approach.DuckDbStore or Approach.DuckDbStar when Warehouse is null => "The analytics service is not reachable.",
+        Approach.PostgresStar when PostgresStarMaxOrderId is null =>
+            "Postgres has no copy of the star schema yet. Run `make docker-star` (or `dotnet DuckStore.Analytics.dll star-to-postgres`).",
+        Approach.PostgresStar when !PostgresStarReady =>
+            $"The star schema copy in Postgres has orders up to #{PostgresStarMaxOrderId:N0}, the warehouse up to #{MaxOrderId:N0}. Run `make docker-star` again.",
+        _ => null,
+    };
+}
+
+// Runs a Compare question in up to four ways and checks that all give the same answer:
+//   Postgres · store tables:  web app --(Postgres protocol)--> Postgres, store.*
+//   DuckDB · store tables:    web app --(HTTP + JSON)--> analytics service --> DuckDB, raw.* (same SQL text)
+//   Postgres · star schema:   web app --(Postgres protocol)--> Postgres, dw.* (copied from the warehouse)
+//   DuckDB · star schema:     web app --(HTTP + JSON)--> analytics service --> DuckDB, dw.*
 public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClient analytics)
 {
-    public const string PostgresApproach = "Postgres direct";
-    public const string DuckDbApproach = "DuckDB service";
+    private static readonly AnalyticSqlLibrary Library = new(typeof(ComparisonRunner).Assembly);
 
-    private static readonly Dictionary<string, string> PostgresSql = LoadPostgresSql();
+    public static string PostgresSqlFor(string id, DataModel model) => Library.For(id, model, "postgres");
 
-    public static string PostgresSqlFor(string id) => PostgresSql[id];
-
-    /// <summary>The warehouse watermark (so both engines see the same orders) and a customer for the lookup.</summary>
+    /// <summary>The watermark, a customer for the lookup, and whether Postgres has a current star schema copy.</summary>
     public async Task<ComparisonContext> PrepareAsync(CancellationToken ct = default)
     {
         WarehouseInfo? warehouse = null;
@@ -86,40 +145,58 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         await using var pick = postgres.CreateCommand("SELECT customer_id FROM store.orders WHERE id = @id");
         pick.Parameters.AddWithValue("id", Math.Max(1, (long)(Random.Shared.NextDouble() * maxOrderId)));
         var customerId = await pick.ExecuteScalarAsync(ct) as long? ?? 1;
-        return new ComparisonContext(maxOrderId, customerId, warehouse);
+
+        long? starMaxOrderId = null;
+        await using (var star = postgres.CreateCommand("SELECT max_order_id FROM dw.etl_info"))
+        {
+            try
+            {
+                starMaxOrderId = await star.ExecuteScalarAsync(ct) as long?;
+            }
+            catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UndefinedTable)
+            {
+                // no copy of the star schema in Postgres
+            }
+        }
+        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId);
     }
 
     /// <summary>
     /// Runs one question with warm-up and timed runs. The approaches take turns
-    /// (Postgres, DuckDB, Postgres, DuckDB, ...) so a slow moment on the machine
-    /// hits both of them, not only the one that happened to run at that time.
+    /// (1, 2, 3, 4, 1, 2, 3, 4, ...) so a slow moment on the machine hits all of
+    /// them, not only the one that happened to run at that time.
     /// </summary>
     public async Task<QuestionMeasurement> MeasureAsync(string id, ComparisonContext context, MeasureOptions options,
         Action<MeasureProgress>? progress = null, CancellationToken ct = default)
     {
-        var approaches = new List<(string Name, Func<Task<ApproachRun>> Run, List<ApproachRun> Warmups, List<ApproachRun> Runs)>();
-        if (options.Postgres) approaches.Add((PostgresApproach, () => RunPostgresAsync(id, context, ct), [], []));
-        if (options.DuckDb) approaches.Add((DuckDbApproach, () => RunDuckDbAsync(id, context, ct), [], []));
+        var chosen = Enum.GetValues<Approach>()
+            .Where(a => options.Approaches is null || options.Approaches.Contains(a))
+            .Where(a => context.Unavailable(a) is null)
+            .Select(a => (Approach: a, Warmups: new List<ApproachRun>(), Runs: new List<ApproachRun>()))
+            .ToList();
 
         var total = options.Warmups + Math.Max(1, options.Runs);
         for (var i = 0; i < total; i++)
         {
             var warmup = i < options.Warmups;
-            foreach (var (name, run, warmups, runs) in approaches)
+            foreach (var (approach, warmups, runs) in chosen)
             {
                 if (warmups.Concat(runs).Any(r => r.Error is not null)) continue; // failed once: do not repeat
-                progress?.Invoke(new MeasureProgress(name, warmup ? i + 1 : i - options.Warmups + 1, warmup ? options.Warmups : total - options.Warmups, warmup));
-                (warmup ? warmups : runs).Add(await run());
+                progress?.Invoke(new MeasureProgress(approach, warmup ? i + 1 : i - options.Warmups + 1, warmup ? options.Warmups : total - options.Warmups, warmup));
+                (warmup ? warmups : runs).Add(await RunAsync(approach, id, context, ct));
             }
         }
-
-        ApproachSeries? Series(string name) => approaches.Where(a => a.Name == name).Select(a => new ApproachSeries(name, a.Runs, a.Warmups)).FirstOrDefault();
-        return new QuestionMeasurement(id, Series(PostgresApproach), Series(DuckDbApproach));
+        return new QuestionMeasurement(id, chosen.Select(c => new ApproachSeries(c.Approach, c.Runs, c.Warmups)).ToList());
     }
 
-    public async Task<ApproachRun> RunPostgresAsync(string id, ComparisonContext context, CancellationToken ct = default)
+    public Task<ApproachRun> RunAsync(Approach approach, string id, ComparisonContext context, CancellationToken ct = default) =>
+        approach.Info() is { IsDuckDb: true } info
+            ? RunDuckDbAsync(approach, id, info.Model, context, ct)
+            : RunPostgresAsync(approach, id, approach.Info().Model, context, ct);
+
+    private async Task<ApproachRun> RunPostgresAsync(Approach approach, string id, DataModel model, ComparisonContext context, CancellationToken ct)
     {
-        var sql = PostgresSqlFor(id);
+        var sql = PostgresSqlFor(id, model);
         try
         {
             await using var connection = await postgres.OpenConnectionAsync(ct); // pooled; not timed
@@ -155,7 +232,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
                 AnalyticId = id, Engine = "postgres", Sql = sql, Columns = columns, Rows = rows,
                 RowCount = count, Truncated = count > rows.Count, ExecuteMs = executeMs, ReadRowsMs = totalMs - executeMs,
             };
-            return new ApproachRun(PostgresApproach, result,
+            return new ApproachRun(approach, result,
             [
                 new("Postgres executes (until the first row)", executeMs, PhaseKind.Database),
                 new("Rows over the network + decoding", totalMs - executeMs, PhaseKind.Transfer),
@@ -163,16 +240,16 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         }
         catch (Exception e) when (e is NpgsqlException or InvalidOperationException && !ct.IsCancellationRequested)
         {
-            return new ApproachRun(PostgresApproach, null, [], 0, null, e.Message);
+            return new ApproachRun(approach, null, [], 0, null, e.Message);
         }
     }
 
-    public async Task<ApproachRun> RunDuckDbAsync(string id, ComparisonContext context, CancellationToken ct = default)
+    private async Task<ApproachRun> RunDuckDbAsync(Approach approach, string id, DataModel model, ComparisonContext context, CancellationToken ct)
     {
         try
         {
             var clock = Stopwatch.StartNew();
-            using var response = await analytics.PostAnalyticAsync(id, new AnalyticRequest(context.MaxOrderId, context.CustomerId), ct);
+            using var response = await analytics.PostAnalyticAsync(id, Request(context, model), ct);
             var httpMs = clock.Elapsed.TotalMilliseconds; // the body is fully downloaded at this point
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
 
@@ -185,7 +262,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             var execute = server.GetValueOrDefault("execute", result.ExecuteMs);
             var read = server.GetValueOrDefault("read", result.ReadRowsMs);
             var serialize = server.GetValueOrDefault("serialize");
-            return new ApproachRun(DuckDbApproach, result,
+            return new ApproachRun(approach, result,
             [
                 new("DuckDB executes (until the first row)", execute, PhaseKind.Database),
                 new("DuckDB reads the remaining rows", read, PhaseKind.Database),
@@ -196,16 +273,22 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         }
         catch (Exception e) when (e is HttpRequestException or AnalyticsServiceException or JsonException && !ct.IsCancellationRequested)
         {
-            return new ApproachRun(DuckDbApproach, null, [], 0, null, e.Message);
+            return new ApproachRun(approach, null, [], 0, null, e.Message);
         }
     }
 
-    // EXPLAIN shows the plan Postgres chose. ANALYZE also runs the query and adds the actual
-    // rows and times; BUFFERS adds the pages read from memory (hit) and from disk (read);
+    // EXPLAIN shows the plan the engine chose. On Postgres, ANALYZE also runs the query and adds the
+    // actual rows and times; BUFFERS adds the pages read from memory (hit) and from disk (read);
     // SETTINGS lists the planner settings that differ from the defaults.
-    public async Task<AnalyticPlan> ExplainPostgresAsync(string id, ComparisonContext context, bool analyze, CancellationToken ct = default)
+    public async Task<AnalyticPlan> ExplainAsync(Approach approach, string id, ComparisonContext context, bool analyze, CancellationToken ct = default)
     {
-        var sql = PostgresSqlFor(id);
+        var info = approach.Info();
+        if (info.IsDuckDb)
+        {
+            return await analytics.PlanAsync(id, Request(context, info.Model), analyze, ct);
+        }
+
+        var sql = PostgresSqlFor(id, info.Model);
         await using var connection = await postgres.OpenConnectionAsync(ct);
         await using var command = new NpgsqlCommand((analyze ? "EXPLAIN (ANALYZE, BUFFERS, SETTINGS)\n" : "EXPLAIN (SETTINGS)\n") + sql, connection)
         {
@@ -223,8 +306,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         return new AnalyticPlan(id, "postgres", analyze, string.Join('\n', lines), clock.Elapsed.TotalMilliseconds);
     }
 
-    public Task<AnalyticPlan> ExplainDuckDbAsync(string id, ComparisonContext context, bool analyze, CancellationToken ct = default) =>
-        analytics.PlanAsync(id, new AnalyticRequest(context.MaxOrderId, context.CustomerId), analyze, ct);
+    private static AnalyticRequest Request(ComparisonContext context, DataModel model) => new(context.MaxOrderId, context.CustomerId, model);
 
     private static void AddParameters(NpgsqlCommand command, string sql, ComparisonContext context)
     {
@@ -232,19 +314,15 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         if (sql.Contains("@customer_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("customer_id", context.CustomerId);
     }
 
-    public static ResultCheck Check(AnalyticResult? a, AnalyticResult? b)
+    public static ResultCheck Check(string nameA, AnalyticResult a, string nameB, AnalyticResult b)
     {
-        if (a is null || b is null)
-        {
-            return new(false, "Run both to compare the results.");
-        }
         if (a.Columns.Count != b.Columns.Count)
         {
-            return new(false, $"Different columns: {a.Columns.Count} vs {b.Columns.Count}.");
+            return new(false, $"Different columns: {nameA} {a.Columns.Count}, {nameB} {b.Columns.Count}.");
         }
         if (a.RowCount != b.RowCount)
         {
-            return new(false, $"Different row counts: Postgres {a.RowCount:N0}, DuckDB {b.RowCount:N0}.");
+            return new(false, $"Different row counts: {nameA} {a.RowCount:N0}, {nameB} {b.RowCount:N0}.");
         }
         var rows = Math.Min(a.Rows.Count, b.Rows.Count);
         for (var r = 0; r < rows; r++)
@@ -253,11 +331,11 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             {
                 if (!Cells.Same(a.Rows[r][c], b.Rows[r][c]))
                 {
-                    return new(false, $"Row {r + 1}, column {a.Columns[c]}: Postgres {Show(a.Rows[r][c])}, DuckDB {Show(b.Rows[r][c])}.");
+                    return new(false, $"Row {r + 1}, column {a.Columns[c]}: {nameA} {Show(a.Rows[r][c])}, {nameB} {Show(b.Rows[r][c])}.");
                 }
             }
         }
-        return new(true, $"Same {a.RowCount:N0} rows × {a.Columns.Count} columns" + (a.Truncated ? $" (first {rows:N0} compared)" : "") + ".");
+        return new(true, $"Same {a.RowCount:N0} rows × {a.Columns.Count} columns.");
     }
 
     private static string Show(object? v) => v is null ? "NULL" : Convert.ToString(v, CultureInfo.InvariantCulture)!;
@@ -275,19 +353,6 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             {
                 result[parts[0]] = ms;
             }
-        }
-        return result;
-    }
-
-    // Embedded as "Analytics.<id>.postgres.sql" (see the .csproj).
-    private static Dictionary<string, string> LoadPostgresSql()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var name in assembly.GetManifestResourceNames().Where(n => n.StartsWith("Analytics.", StringComparison.Ordinal)))
-        {
-            using var reader = new StreamReader(assembly.GetManifestResourceStream(name)!);
-            result[name["Analytics.".Length..^".postgres.sql".Length]] = reader.ReadToEnd();
         }
         return result;
     }

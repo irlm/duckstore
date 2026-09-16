@@ -11,6 +11,10 @@
         <MudText Typo="Typo.body2" Class="mt-3" Style="opacity: .75">@Progress</MudText>
         <MudProgressLinear Indeterminate Color="Color.Default" Class="mb-4 mt-1" />
     }
+    else if (Series is null && Unavailable is not null)
+    {
+        <MudText Typo="Typo.body2" Class="my-3" Style="opacity: .7">Not available: @Unavailable</MudText>
+    }
     else if (Series is null)
     {
         <MudText Typo="Typo.body2" Class="my-3" Style="opacity: .6">Not run yet.</MudText>
@@ -53,7 +57,7 @@
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Code" OnClick="() => _showSql = !_showSql">
             @(_showSql ? "Hide SQL" : "SQL")
         </MudButton>
-        @if (Explain is not null)
+        @if (Explain is not null && Unavailable is null)
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.AccountTree" OnClick="() => _showPlan = !_showPlan">
                 @(_showPlan ? "Hide plan" : "Plan")
@@ -119,6 +123,9 @@
     [Parameter, EditorRequired] public string Title { get; set; } = "";
     [Parameter, EditorRequired] public string Path { get; set; } = "";
     [Parameter] public ApproachSeries? Series { get; set; }
+
+    /// <summary>Why this approach cannot run now (for example no star schema copy in Postgres).</summary>
+    [Parameter] public string? Unavailable { get; set; }
 
     /// <summary>Set while running, e.g. "Run 2 of 5".</summary>
     [Parameter] public string? Progress { get; set; }

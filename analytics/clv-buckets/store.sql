@@ -13,7 +13,7 @@ WITH fx_daily AS MATERIALIZED (
                                interval '1 day') AS g(d)
 ),
 spend AS (
-    SELECT o.customer_id, sum(round(o.total / fx.units_per_usd, 2)) AS lifetime_usd
+    SELECT o.customer_id, sum(round(o.total / fx.units_per_usd, 2)::numeric(14, 2)) AS lifetime_usd
     FROM store.orders o
     JOIN fx_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
     WHERE o.status <> 'cancelled' AND o.id <= @max_order_id

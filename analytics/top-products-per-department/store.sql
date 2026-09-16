@@ -20,27 +20,23 @@ fx_daily AS MATERIALIZED (
                                (SELECT max(placed_at)::date FROM store.orders),
                                interval '1 day') AS g(d)
 ),
-monthly AS (
-    SELECT t.department,
-           date_trunc('month', o.placed_at)::date AS month,
-           sum(round((oi.unit_price * oi.quantity - oi.discount) / fx.units_per_usd, 2)) AS revenue
+revenue AS (
+    SELECT t.department, p.id AS product_id, p.name AS product_name,
+           sum(round((oi.unit_price * oi.quantity - oi.discount) / fx.units_per_usd, 2)::numeric(14, 2)) AS revenue_usd
     FROM store.orders o
     JOIN store.order_items oi ON oi.order_id = o.id
-    JOIN store.products pr ON pr.id = oi.product_id
-    JOIN tree t ON t.id = pr.category_id
+    JOIN store.products p ON p.id = oi.product_id
+    JOIN tree t ON t.id = p.category_id
     JOIN fx_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
-    WHERE o.status <> 'cancelled' AND o.id <= @max_order_id
-    GROUP BY 1, 2
-),
-bounds AS (
-    SELECT date_trunc('month', max(placed_at))::date AS current_month FROM store.orders WHERE id <= @max_order_id
+    WHERE o.status <> 'cancelled'
+      AND o.id <= @max_order_id
+      AND o.placed_at::date > (SELECT max(placed_at)::date FROM store.orders WHERE id <= @max_order_id) - 365
+    GROUP BY t.department, p.id, p.name
 )
-SELECT m.department,
-       m.month,
-       m.revenue                                     AS revenue_usd,
-       p.revenue                                     AS revenue_prev_year_usd,
-       round(100.0 * (m.revenue / p.revenue - 1), 1) AS growth_pct
-FROM monthly m
-JOIN bounds b ON m.month >= b.current_month - interval '12 months' AND m.month < b.current_month
-LEFT JOIN monthly p ON p.department = m.department AND p.month = (m.month - interval '12 months')::date
-ORDER BY m.department, m.month
+SELECT department, rank, product_id, product_name, revenue_usd
+FROM (
+    SELECT *, row_number() OVER (PARTITION BY department ORDER BY revenue_usd DESC, product_id) AS rank
+    FROM revenue
+) ranked
+WHERE rank <= 3                     -- no QUALIFY in Postgres: filter in an outer query
+ORDER BY department, rank

@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-compare docker-logs
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-compare docker-logs dotnet-star
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -52,6 +52,10 @@ dotnet-analytics:
 dotnet-etl:
 	dotnet run --project dotnet/src/DuckStore.Analytics --launch-profile http -- etl
 
+## dotnet-star: copy the local warehouse's star schema into Postgres (schema dw)
+dotnet-star:
+	dotnet run --project dotnet/src/DuckStore.Analytics --launch-profile http -- star-to-postgres
+
 ## dotnet-test: integration tests of the .NET app (needs `make up seed etl`)
 dotnet-test:
 	dotnet test dotnet/DuckStore.slnx
@@ -70,6 +74,10 @@ docker-seed:
 ## docker-etl: rebuild the warehouse in the analytics volume (the running service picks up the new file)
 docker-etl:
 	docker compose run --rm --no-deps analytics etl
+
+## docker-star: copy the warehouse's star schema into Postgres (schema dw) for the Compare page's fourth approach
+docker-star:
+	docker compose run --rm --no-deps analytics star-to-postgres
 
 ## docker-compare: run every Compare question from the web container and print the timings
 docker-compare:

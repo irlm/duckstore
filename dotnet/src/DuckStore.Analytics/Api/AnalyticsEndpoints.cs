@@ -14,8 +14,9 @@ public static class AnalyticsEndpoints
     {
         var analytics = app.MapGroup("/api/analytics").WithTags("Analytics (Compare page)");
 
-        analytics.MapGet("/", () => AnalyticCatalog.All.Select(a => new AnalyticSql(a.Id, AnalyticsRunner.SqlFor(a.Id))))
-            .WithSummary("The DuckDB SQL of every Compare question");
+        analytics.MapGet("/", () => AnalyticCatalog.All.SelectMany(a => new[] { DataModel.Store, DataModel.Star }
+                .Select(model => new AnalyticSql(a.Id, model, AnalyticsRunner.SqlFor(a.Id, model)))))
+            .WithSummary("The DuckDB SQL of every Compare question, for both data models");
 
         // The JSON is serialized here, not by the framework, so the time it takes can be
         // measured and reported to the caller in the standard Server-Timing header:
@@ -33,7 +34,7 @@ public static class AnalyticsEndpoints
                     $"execute;dur={result.ExecuteMs:F3}, read;dur={result.ReadRowsMs:F3}, serialize;dur={serializeMs:F3}");
                 return Results.Bytes(bytes, "application/json");
             })
-            .WithSummary("Run one Compare question on DuckDB; timings in the Server-Timing header");
+            .WithSummary("Run one Compare question on DuckDB (Model: Star or Store); timings in the Server-Timing header");
 
         analytics.MapPost("/{id}/plan", (string id, AnalyticRequest request, bool? analyze, AnalyticsRunner runner, CancellationToken ct) =>
                 runner.ExplainAsync(id, request, analyze ?? false, ct))

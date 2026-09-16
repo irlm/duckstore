@@ -2,7 +2,7 @@ SELECT o.id AS order_id,
        o.placed_at,
        o.status,
        (SELECT count(*) FROM store.order_items oi WHERE oi.order_id = o.id) AS line_count,
-       round(o.total / fx.units_per_usd, 2)                                 AS total_usd
+       round(o.total / fx.units_per_usd, 2)::numeric(14, 2)                                 AS total_usd
 FROM store.orders o
 CROSS JOIN LATERAL (            -- 20 rows: a lookup per row is cheap here
     SELECT f.units_per_usd

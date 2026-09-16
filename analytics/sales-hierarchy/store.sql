@@ -22,7 +22,7 @@ fx_daily AS MATERIALIZED (
 ),
 customer_revenue AS (
     SELECT c.account_manager_id,
-           sum(round((oi.unit_price * oi.quantity - oi.discount) / fx.units_per_usd, 2)) AS revenue
+           sum(round((oi.unit_price * oi.quantity - oi.discount) / fx.units_per_usd, 2)::numeric(14, 2)) AS revenue
     FROM store.orders o
     JOIN store.order_items oi ON oi.order_id = o.id
     JOIN store.customers c ON c.id = o.customer_id

@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Text.Json.Serialization;
+
 namespace DuckStore.Contracts;
 
 public enum AnalyticKind
@@ -14,9 +17,8 @@ public enum AnalyticKind
 
 public sealed record AnalyticDefinition(string Id, string Title, string Question, string Explanation, AnalyticKind Kind, bool NeedsCustomer = false);
 
-// The questions of the Compare page. Each one has two SQL files in the top-level
-// analytics/ folder: <id>.postgres.sql (normalized store tables, run by the web
-// app) and <id>.duckdb.sql (star schema, run by the analytics service). Both
+// The questions of the Compare page. Each one has a folder in the top-level analytics/
+// folder with its SQL for each data model (see analytics/README.md). All versions
 // return the same columns, so the page can check that the results match.
 public static class AnalyticCatalog
 {
@@ -87,11 +89,22 @@ public static class AnalyticCatalog
     public static AnalyticDefinition? Find(string id) => All.FirstOrDefault(a => a.Id == id);
 }
 
+/// <summary>The same data in two shapes.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<DataModel>))]
+public enum DataModel
+{
+    /// <summary>The normalized store tables (3NF), as the application writes them.</summary>
+    Store,
+
+    /// <summary>The star schema the ETL builds: facts with USD amounts, flattened dimensions.</summary>
+    Star,
+}
+
 /// <summary>
-/// Parameters for both engines. MaxOrderId is the warehouse watermark: Postgres
-/// only counts orders up to it, so both engines answer on the same orders.
+/// Parameters for both engines. MaxOrderId is the warehouse watermark: the store SQL
+/// only counts orders up to it, so every approach answers on the same orders.
 /// </summary>
-public sealed record AnalyticRequest(long MaxOrderId, long? CustomerId = null);
+public sealed record AnalyticRequest(long MaxOrderId, long? CustomerId = null, DataModel Model = DataModel.Star);
 
 public sealed record AnalyticResult
 {
@@ -113,7 +126,38 @@ public sealed record AnalyticResult
     public double ReadRowsMs { get; init; }
 }
 
-public sealed record AnalyticSql(string Id, string Sql);
+public sealed record AnalyticSql(string Id, DataModel Model, string Sql);
+
+/// <summary>
+/// The SQL files of the Compare questions, embedded in a project as "Analytics/&lt;id&gt;/&lt;file&gt;".
+/// Layout (see analytics/README.md): store.sql runs on both engines, star.sql too, and
+/// star.&lt;engine&gt;.sql replaces star.sql for one engine when the dialects differ.
+/// </summary>
+public sealed class AnalyticSqlLibrary
+{
+    private readonly Dictionary<string, string> _files = new(StringComparer.Ordinal);
+
+    public AnalyticSqlLibrary(Assembly assembly)
+    {
+        foreach (var name in assembly.GetManifestResourceNames())
+        {
+            var path = name.Replace('\\', '/');
+            if (!path.StartsWith("Analytics/", StringComparison.Ordinal)) continue;
+            using var reader = new StreamReader(assembly.GetManifestResourceStream(name)!);
+            _files[path["Analytics/".Length..]] = reader.ReadToEnd();
+        }
+    }
+
+    /// <param name="engine">"postgres" or "duckdb".</param>
+    public string For(string id, DataModel model, string engine)
+    {
+        if (model == DataModel.Store) return Get($"{id}/store.sql");
+        return _files.TryGetValue($"{id}/star.{engine}.sql", out var sql) ? sql : Get($"{id}/star.sql");
+    }
+
+    private string Get(string path) =>
+        _files.TryGetValue(path, out var sql) ? sql : throw new KeyNotFoundException($"No SQL file analytics/{path}.");
+}
 
 /// <summary>
 /// A query plan as text. Analyze = false: the plan the engine chose, with estimated rows (the query does not run).

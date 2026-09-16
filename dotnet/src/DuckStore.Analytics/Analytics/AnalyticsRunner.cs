@@ -1,28 +1,44 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using DuckDB.NET.Data;
 using DuckStore.Analytics.Warehouse;
 using DuckStore.Contracts;
 
 namespace DuckStore.Analytics.Analytics;
 
-// Runs the DuckDB side of the Compare page: analytics/<id>.duckdb.sql, embedded
-// at build time. The web app runs the matching <id>.postgres.sql itself.
-public sealed class AnalyticsRunner(DuckDbWarehouse warehouse)
+// Runs the DuckDB side of the Compare page, on either data model (see analytics/README.md):
+//   star:  analytics/<id>/star.sql (or star.duckdb.sql) on the dw.* star schema
+//   store: analytics/<id>/store.sql, the SQL written for Postgres, on the raw.* copy of the store tables
+public sealed partial class AnalyticsRunner(DuckDbWarehouse warehouse)
 {
     public const int MaxRows = 250_000;
 
-    private static readonly Dictionary<string, string> Sql = LoadSql();
+    private static readonly AnalyticSqlLibrary Library = new(typeof(AnalyticsRunner).Assembly);
 
-    public static string SqlFor(string id) =>
-        Sql.TryGetValue(id, out var sql) ? sql : throw new KeyNotFoundException($"Unknown analytic '{id}'.");
+    public static string SqlFor(string id, DataModel model)
+    {
+        if (AnalyticCatalog.Find(id) is null) throw new KeyNotFoundException($"Unknown analytic '{id}'.");
+        var sql = Library.For(id, model, "duckdb");
+        return model == DataModel.Store ? StoreSqlForDuckDb(sql) : sql;
+    }
 
-    public static IReadOnlyCollection<string> Ids => Sql.Keys;
+    // The store SQL is written for Postgres. It runs unchanged on DuckDB's raw.* copy of the same
+    // tables after two replacements: the schema name, and the parameter prefix (@ in Npgsql, $ in DuckDB).
+    // It is a plain text replacement, so the store SQL must not contain "store." inside a string.
+    internal static string StoreSqlForDuckDb(string postgresSql) =>
+        ParameterPrefix().Replace(StoreSchema().Replace(postgresSql, "raw."), "$$$1");
+
+    [GeneratedRegex(@"(?<![\w.])store\.(?=\w)")]
+    private static partial Regex StoreSchema();
+
+    [GeneratedRegex(@"@(max_order_id|customer_id)\b")]
+    private static partial Regex ParameterPrefix();
 
     public async Task<AnalyticResult> RunAsync(string id, AnalyticRequest request, CancellationToken ct)
     {
-        var sql = SqlFor(id);
+        var sql = SqlFor(id, request.Model);
         await using var connection = await warehouse.OpenAsync(ct); // not timed, like a pooled Postgres connection
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
@@ -69,7 +85,7 @@ public sealed class AnalyticsRunner(DuckDbWarehouse warehouse)
     // the rows and time of every operator. Both return the plan as text in the last column.
     public async Task<AnalyticPlan> ExplainAsync(string id, AnalyticRequest request, bool analyze, CancellationToken ct)
     {
-        var sql = SqlFor(id);
+        var sql = SqlFor(id, request.Model);
         await using var connection = await warehouse.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = (analyze ? "EXPLAIN ANALYZE\n" : "EXPLAIN\n") + sql;
@@ -91,18 +107,9 @@ public sealed class AnalyticsRunner(DuckDbWarehouse warehouse)
         {
             command.Parameters.Add(new DuckDBParameter("customer_id", request.CustomerId ?? 0));
         }
-    }
-
-    // Embedded as "Analytics.<id>.duckdb.sql" (see the .csproj).
-    private static Dictionary<string, string> LoadSql()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var name in assembly.GetManifestResourceNames().Where(n => n.StartsWith("Analytics.", StringComparison.Ordinal)))
+        if (sql.Contains("$max_order_id", StringComparison.Ordinal))
         {
-            using var reader = new StreamReader(assembly.GetManifestResourceStream(name)!);
-            result[name["Analytics.".Length..^".duckdb.sql".Length]] = reader.ReadToEnd();
+            command.Parameters.Add(new DuckDBParameter("max_order_id", request.MaxOrderId));
         }
-        return result;
     }
 }

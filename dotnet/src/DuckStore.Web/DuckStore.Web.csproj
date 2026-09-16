@@ -19,8 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Postgres side of the Compare page. The analytics service embeds the *.duckdb.sql files. -->
-    <EmbeddedResource Include="..\..\..\analytics\*.postgres.sql" LogicalName="Analytics.%(Filename)%(Extension)" Link="Sql\Analytics\%(Filename)%(Extension)" />
+    <!-- The Compare questions: analytics/<id>/*.sql, read with AnalyticSqlLibrary. -->
+    <EmbeddedResource Include="..\..\..\analytics\**\*.sql" LogicalName="Analytics/%(RecursiveDir)%(Filename)%(Extension)" Link="Sql\Analytics\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

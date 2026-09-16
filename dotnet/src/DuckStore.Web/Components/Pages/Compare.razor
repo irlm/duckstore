@@ -7,7 +7,7 @@
 <PageTitle>Compare</PageTitle>
 
 <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
-    <MudText Typo="Typo.h4">Compare: Postgres vs DuckDB</MudText>
+    <MudText Typo="Typo.h4">Compare: engine and data model</MudText>
     <MudSpacer />
     <MudSelect T="int" @bind-Value="_runs" Label="Timed runs" Dense Variant="Variant.Outlined" Disabled="_busy" Style="max-width: 120px">
         @foreach (var n in new[] { 1, 3, 5, 7 })
@@ -16,8 +16,6 @@
         }
     </MudSelect>
     <MudCheckBox T="bool" @bind-Value="_warmup" Label="Warm-up run first" Disabled="_busy" />
-    <MudCheckBox T="bool" @bind-Value="_usePostgres" Label="Postgres direct" Disabled="_runningAll" />
-    <MudCheckBox T="bool" @bind-Value="_useDuckDb" Label="DuckDB service" Disabled="_runningAll" />
     @if (_runningAll)
     {
         <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">Stop</MudButton>
@@ -25,24 +23,39 @@
     else
     {
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="RunAllAsync"
-                   Disabled="@(_busy || (!_usePostgres && !_useDuckDb))">Run all</MudButton>
+                   Disabled="@(_busy || _selected.Count == 0)">Run all</MudButton>
     }
 </MudStack>
 
-<MudText Typo="Typo.body1" Class="mb-3" Style="max-width: 95ch">
-    Each question is answered two ways. <b>Postgres direct</b>: the web app sends SQL to Postgres over the Postgres protocol,
-    on the normalized store tables. <b>DuckDB service</b>: the web app calls the analytics service over HTTP; it queries its
-    DuckDB file (star schema) and sends the rows back as JSON. Postgres only counts orders up to the warehouse watermark,
-    so both answer on the same data, and the page checks that the results match. Runs are sequential, so they do not
-    compete for the CPU. One run can be unlucky (cold caches, another program busy): use a warm-up run and 3-7 timed
-    runs, and the page shows the <b>median</b> run. The two approaches take turns, so a slow moment hits both.
+<MudText Typo="Typo.body1" Class="mb-2" Style="max-width: 100ch">
+    Each question can run four ways: two <b>engines</b> (Postgres, DuckDB) on two <b>data models</b> (the normalized
+    store tables, and the star schema the ETL builds). On the store tables both engines run the <b>same SQL text</b>,
+    so the difference is the engine. On the same engine, store tables vs star schema shows what the data model is worth.
+    Postgres runs are sent by this web app directly; DuckDB runs go over HTTP to the analytics service and come back as JSON.
+    Every approach counts the orders up to the warehouse watermark, and the page checks that all results are equal.
 </MudText>
+<MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
+    Runs are sequential, so they do not compete for the CPU, and the approaches take turns, so a slow moment hits all of them.
+    One run can be unlucky (cold caches, another program busy): use a warm-up run and 3-7 timed runs; the page shows the
+    <b>median</b> run.
+</MudText>
+
+<MudStack Row Wrap="Wrap.Wrap" Spacing="3" Class="mb-2" AlignItems="AlignItems.Center">
+    <MudText Typo="Typo.body2" Style="font-weight: 600">Run:</MudText>
+    @foreach (var info in Approaches.All)
+    {
+        <MudCheckBox T="bool" Value="_selected.Contains(info.Id)" ValueChanged="v => Toggle(info.Id, v)" Label="@info.Name"
+                     Disabled="@(_runningAll || _context?.Unavailable(info.Id) is not null)" Dense />
+    }
+</MudStack>
 
 @if (_context is not null)
 {
-    <MudText Typo="Typo.body2" Class="mb-3" Style="opacity: .8">
-        @ContextText(_context)
-    </MudText>
+    <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .8">@ContextText(_context)</MudText>
+    @if (_context.Unavailable(Approach.PostgresStar) is { } why)
+    {
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">Postgres · star schema: @why</MudAlert>
+    }
 }
 
 <MudPaper Outlined Class="pa-3 mb-4">
@@ -58,30 +71,44 @@
 @if (_state.Values.Any(s => s.Measurement is not null))
 {
     <MudPaper Outlined Class="pa-3 mb-4">
-        <MudText Typo="Typo.h6" Class="mb-2">Summary</MudText>
-        <MudSimpleTable Dense Elevation="0">
-            <thead><tr><th>Question</th><th class="num">Postgres direct</th><th class="num">DuckDB service</th><th class="num">Runs</th><th>Faster (median)</th><th>Result</th></tr></thead>
-            <tbody>
-                @foreach (var a in AnalyticCatalog.All)
-                {
-                    var s = _state[a.Id];
-                    if (s.Measurement is not { } m) continue;
+        <MudText Typo="Typo.h6" Class="mb-2">Summary (medians)</MudText>
+        <div class="table-scroll">
+            <MudSimpleTable Dense Elevation="0">
+                <thead>
                     <tr>
-                        <td><a href="@($"compare#{a.Id}")">@a.Title</a></td>
-                        <td class="num">@Total(m.Postgres)</td>
-                        <td class="num">@Total(m.DuckDb)</td>
-                        <td class="num">@((m.Postgres ?? m.DuckDb)?.Runs.Count)</td>
-                        <td>@Faster(m)</td>
-                        <td>
-                            @if (m.Check is { } c)
-                            {
-                                <MudText Typo="Typo.body2" Color="@(c.Same ? Color.Success : Color.Error)">@(c.Same ? "✓ same" : "✗ different")</MudText>
-                            }
-                        </td>
+                        <th>Question</th>
+                        @foreach (var info in Approaches.All)
+                        {
+                            <th class="num">@info.Name</th>
+                        }
+                        <th>Engine: DuckDB vs Postgres, store tables</th>
+                        <th>Model: star vs store, DuckDB</th>
+                        <th>Result</th>
                     </tr>
-                }
-            </tbody>
-        </MudSimpleTable>
+                </thead>
+                <tbody>
+                    @foreach (var a in AnalyticCatalog.All)
+                    {
+                        if (_state[a.Id].Measurement is not { } m) continue;
+                        <tr>
+                            <td><a href="@($"compare#{a.Id}")">@a.Title</a></td>
+                            @foreach (var info in Approaches.All)
+                            {
+                                <td class="num">@Total(m[info.Id])</td>
+                            }
+                            <td>@EngineEffect(m.Speedup(Approach.PostgresStore, Approach.DuckDbStore))</td>
+                            <td>@ModelEffect(m.Speedup(Approach.DuckDbStore, Approach.DuckDbStar))</td>
+                            <td>
+                                @if (m.Check is { } c)
+                                {
+                                    <MudText Typo="Typo.body2" Color="@(c.Same ? Color.Success : Color.Error)">@(c.Same ? "✓ same" : "✗ different")</MudText>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </div>
     </MudPaper>
 }
 
@@ -93,34 +120,44 @@
             <MudText Typo="Typo.h6">@analytic.Title</MudText>
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindText(analytic.Kind)</MudChip>
             <MudSpacer />
-            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" Disabled="@(_busy || (!_usePostgres && !_useDuckDb))"
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" Disabled="@(_busy || _selected.Count == 0)"
                        OnClick="() => RunOneAsync(analytic)">@(s.Measurement is null ? "Run" : "Run again")</MudButton>
         </MudStack>
         <MudText Typo="Typo.body2" Class="mt-1">@analytic.Question</MudText>
         <MudText Typo="Typo.body2" Class="mb-3" Style="opacity: .7">@analytic.Explanation</MudText>
 
-        <MudGrid Spacing="4">
-            <MudItem xs="12" md="6">
-                <ApproachPanel Title="Postgres direct" Path="web → Postgres (store tables)" Series="s.Measurement?.Postgres" Progress="@s.PostgresProgress"
-                               Explain="(analyze, ct) => Runner.ExplainPostgresAsync(analytic.Id, _context!, analyze, ct)" PlanHelp="@PostgresPlanHelp" Busy="_busy"
-                               Sql="@ComparisonRunner.PostgresSqlFor(analytic.Id)" ScaleMs="Scale(s)" />
-            </MudItem>
-            <MudItem xs="12" md="6">
-                <ApproachPanel Title="DuckDB service" Path="web → HTTP → analytics service → DuckDB (star schema)" Series="s.Measurement?.DuckDb" Progress="@s.DuckDbProgress"
-                               Explain="(analyze, ct) => Runner.ExplainDuckDbAsync(analytic.Id, _context!, analyze, ct)" PlanHelp="@DuckDbPlanHelp" Busy="_busy"
-                               Sql="@(_duckSql.GetValueOrDefault(analytic.Id) ?? "(ask the analytics service)")" ScaleMs="Scale(s)" />
-            </MudItem>
-        </MudGrid>
+        <div class="approach-grid">
+            <div class="grid-head">Store tables <span>normalized, as the application writes them</span></div>
+            <div class="grid-head">Star schema <span>facts and dimensions built by the ETL</span></div>
+            @foreach (var approach in GridOrder)
+            {
+                var info = approach.Info();
+                <ApproachPanel Title="@info.Name" Path="@info.Path" Series="s.Measurement?[approach]" Progress="@s.Progress.GetValueOrDefault(approach)"
+                               Unavailable="@_context?.Unavailable(approach)"
+                               Explain="(analyze, ct) => Runner.ExplainAsync(approach, analytic.Id, _context!, analyze, ct)"
+                               PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : PostgresPlanHelp)" Busy="_busy"
+                               Sql="@SqlFor(analytic.Id, info)" ScaleMs="Scale(s)" />
+            }
+        </div>
 
-        @if (s.Measurement?.Check is { } check)
+        @if (s.Measurement is { } measurement)
         {
-            <MudAlert Severity="@(check.Same ? Severity.Success : Severity.Warning)" Dense Class="mt-3">
-                @check.Message
-                @if (!check.Same && analytic.Id == "customer-orders")
-                {
-                    <span> Postgres shows the live status of each order; the warehouse shows the status at ETL time.</span>
-                }
-            </MudAlert>
+            <MudText Typo="Typo.body2" Class="mt-3">
+                <b>Engine</b> (same data): store tables @EngineEffect(measurement.Speedup(Approach.PostgresStore, Approach.DuckDbStore)),
+                star schema @EngineEffect(measurement.Speedup(Approach.PostgresStar, Approach.DuckDbStar)).
+                <b>Data model</b> (same engine): on Postgres @ModelEffect(measurement.Speedup(Approach.PostgresStore, Approach.PostgresStar)),
+                on DuckDB @ModelEffect(measurement.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)).
+            </MudText>
+            @if (measurement.Check is { } check)
+            {
+                <MudAlert Severity="@(check.Same ? Severity.Success : Severity.Warning)" Dense Class="mt-3">
+                    @check.Message
+                    @if (!check.Same && analytic.Id == "customer-orders")
+                    {
+                        <span> The store tables show the live status of each order; the star schema shows the status at ETL time.</span>
+                    }
+                </MudAlert>
+            }
         }
     </MudPaper>
 }
@@ -131,15 +168,16 @@
     private sealed class CardState
     {
         public QuestionMeasurement? Measurement;
-        public string? PostgresProgress;
-        public string? DuckDbProgress;
+        public readonly Dictionary<Approach, string> Progress = [];
     }
 
+    // Rows = engine, columns = data model.
+    private static readonly Approach[] GridOrder = [Approach.PostgresStore, Approach.PostgresStar, Approach.DuckDbStore, Approach.DuckDbStar];
+
     private readonly Dictionary<string, CardState> _state = AnalyticCatalog.All.ToDictionary(a => a.Id, _ => new CardState());
-    private Dictionary<string, string> _duckSql = [];
+    private readonly HashSet<Approach> _selected = [.. Enum.GetValues<Approach>()];
+    private Dictionary<(string, DataModel), string> _duckSql = [];
     private ComparisonContext? _context;
-    private bool _usePostgres = true;
-    private bool _useDuckDb = true;
     private int _runs = 1;
     private bool _warmup;
     private bool _busy;
@@ -168,13 +206,20 @@
     {
         try
         {
-            _duckSql = (await Analytics.AnalyticsSqlAsync()).ToDictionary(a => a.Id, a => a.Sql);
+            _duckSql = (await Analytics.AnalyticsSqlAsync()).ToDictionary(a => (a.Id, a.Model), a => a.Sql);
         }
         catch (Exception e) when (e is HttpRequestException or AnalyticsServiceException)
         {
-            _useDuckDb = false;
+            // the DuckDB approaches show as unavailable
         }
         _context = await Runner.PrepareAsync();
+        _selected.RemoveWhere(a => _context.Unavailable(a) is not null);
+    }
+
+    private void Toggle(Approach approach, bool on)
+    {
+        if (on) _selected.Add(approach);
+        else _selected.Remove(approach);
     }
 
     private async Task RunOneAsync(AnalyticDefinition analytic)
@@ -223,32 +268,37 @@
     private async Task RunAsync(AnalyticDefinition analytic, CancellationToken ct)
     {
         var s = _state[analytic.Id];
-        var options = new MeasureOptions(_runs, _warmup ? 1 : 0, _usePostgres, _useDuckDb);
+        var chosen = _selected.Where(a => _context!.Unavailable(a) is null).ToList();
         try
         {
-            s.Measurement = await Runner.MeasureAsync(analytic.Id, _context!, options, progress =>
+            s.Measurement = await Runner.MeasureAsync(analytic.Id, _context!, new MeasureOptions(_runs, _warmup ? 1 : 0, chosen), progress =>
             {
-                var text = progress.Warmup ? "Warm-up run (not counted)" : $"Run {progress.Run} of {progress.Of}";
-                (s.PostgresProgress, s.DuckDbProgress) = progress.Approach == ComparisonRunner.PostgresApproach
-                    ? (text, _useDuckDb ? "Waiting for its turn" : null)
-                    : (_usePostgres ? "Waiting for its turn" : null, text);
+                foreach (var approach in chosen)
+                {
+                    s.Progress[approach] = approach != progress.Approach ? "Waiting for its turn"
+                        : progress.Warmup ? "Warm-up run (not counted)" : $"Run {progress.Run} of {progress.Of}";
+                }
                 _ = InvokeAsync(StateHasChanged);
             }, ct);
         }
         finally
         {
-            s.PostgresProgress = s.DuckDbProgress = null;
+            s.Progress.Clear();
         }
         StateHasChanged();
     }
 
     private void Stop() => _cts.Cancel();
 
+    private string SqlFor(string id, ApproachInfo info) => info.IsDuckDb
+        ? _duckSql.GetValueOrDefault((id, info.Model)) ?? "(ask the analytics service)"
+        : ComparisonRunner.PostgresSqlFor(id, info.Model);
+
     private static string ContextText(ComparisonContext c)
     {
         var warehouse = c.Warehouse is { } w
             ? $"warehouse built {w.BuiltAt:yyyy-MM-dd HH:mm} UTC, {w.SizeBytes / 1e6:N0} MB, DuckDB {w.DuckDbVersion}, {w.Threads} threads"
-            : "the analytics service is not reachable: Postgres only";
+            : "the analytics service is not reachable";
         return $"Orders up to #{c.MaxOrderId:N0} ({warehouse}) · lookup customer #{c.CustomerId}";
     }
 
@@ -263,18 +313,24 @@
     }
 
     private static double Scale(CardState s) =>
-        Math.Max(s.Measurement?.Postgres?.Median?.TotalMs ?? 0, s.Measurement?.DuckDb?.Median?.TotalMs ?? 0);
+        s.Measurement?.Series.Select(x => x.Median?.TotalMs ?? 0).DefaultIfEmpty(0).Max() ?? 0;
 
     private static string Total(ApproachSeries? series) =>
         series is null ? "" : series.Median is { } run ? Format.Ms(run.TotalMs) : "error";
 
-    private static string Faster(QuestionMeasurement m)
+    private static string EngineEffect(double? postgresOverDuckDb) => postgresOverDuckDb switch
     {
-        if (m.Postgres?.Median is not { TotalMs: > 0 } pg || m.DuckDb?.Median is not { TotalMs: > 0 } duck) return "";
-        return pg.TotalMs <= duck.TotalMs
-            ? $"Postgres, {duck.TotalMs / pg.TotalMs:0.#}×"
-            : $"DuckDB, {pg.TotalMs / duck.TotalMs:0.#}×";
-    }
+        null => "not measured",
+        >= 1 => $"DuckDB {postgresOverDuckDb:0.#}× faster",
+        _ => $"Postgres {1 / postgresOverDuckDb:0.#}× faster",
+    };
+
+    private static string ModelEffect(double? storeOverStar) => storeOverStar switch
+    {
+        null => "not measured",
+        >= 1 => $"star schema {storeOverStar:0.#}× faster",
+        _ => $"store tables {1 / storeOverStar:0.#}× faster",
+    };
 
     private static string KindText(AnalyticKind kind) => kind switch
     {

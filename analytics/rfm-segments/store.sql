@@ -16,7 +16,7 @@ per_customer AS (
     SELECT o.customer_id,
            (SELECT max(placed_at)::date FROM store.orders WHERE id <= @max_order_id) - max(o.placed_at::date) AS recency_days,
            count(*)                                        AS frequency,
-           sum(round(o.total / fx.units_per_usd, 2))       AS monetary
+           sum(round(o.total / fx.units_per_usd, 2)::numeric(14, 2))       AS monetary
     FROM store.orders o
     JOIN fx_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
     WHERE o.status <> 'cancelled' AND o.id <= @max_order_id
