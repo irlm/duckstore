@@ -1,0 +1,47 @@
+# Postgres 18 = the store's OLTP database.
+# Port 55432 on the host so it does not clash with a local Postgres on 5432.
+services:
+  postgres:
+    image: postgres:18
+    container_name: duckstore-postgres
+    environment:
+      POSTGRES_USER: store
+      POSTGRES_PASSWORD: store
+      POSTGRES_DB: store
+    ports:
+      - "127.0.0.1:55432:5432"
+    shm_size: 2g
+    # Reasonable settings for a laptop with ~16GB+ RAM. Parallel query is on,
+    # so the Postgres vs DuckDB comparisons are fair.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=128MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_wal_size=8GB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - max_worker_processes=16
+      - -c
+      - max_parallel_workers=8
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_maintenance_workers=4
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U store -d store"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

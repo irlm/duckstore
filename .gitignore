@@ -1,0 +1,11 @@
+# build output
+/bin/
+
+# DuckDB warehouse files, Parquet exports, scratch databases
+/data/
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# local overrides
+.env
