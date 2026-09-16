@@ -1,3 +1,4 @@
+@implements IDisposable
 @* One way of answering a question: total time, the phase breakdown, the SQL and the rows. *@
 <div class="approach">
     <MudStack Row AlignItems="AlignItems.Baseline" Wrap="Wrap.Wrap" Spacing="2">
@@ -52,6 +53,12 @@
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Code" OnClick="() => _showSql = !_showSql">
             @(_showSql ? "Hide SQL" : "SQL")
         </MudButton>
+        @if (Explain is not null)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.AccountTree" OnClick="() => _showPlan = !_showPlan">
+                @(_showPlan ? "Hide plan" : "Plan")
+            </MudButton>
+        }
         @if (Series?.Median?.Result is { RowCount: > 0 })
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.TableRows" OnClick="() => _showRows = !_showRows">
@@ -60,6 +67,34 @@
         }
     </MudStack>
     <MudCollapse Expanded="_showSql"><pre class="sql">@Sql</pre></MudCollapse>
+    @if (_showPlan)
+    {
+        <div class="mt-2">
+            <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_planLoading || Busy)" OnClick="() => LoadPlanAsync(false)">Estimated plan</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_planLoading || Busy)" OnClick="() => LoadPlanAsync(true)">Actual plan (runs the query)</MudButton>
+                @if (_planLoading)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate />
+                }
+            </MudStack>
+            @if (PlanHelp is not null)
+            {
+                <MudText Typo="Typo.caption" Class="mt-2 d-block" Style="opacity: .8; max-width: 80ch">@PlanHelp</MudText>
+            }
+            @if (_planError is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense Class="mt-2">@_planError</MudAlert>
+            }
+            else if (_plan is { } plan)
+            {
+                <MudText Typo="Typo.caption" Class="mt-2 d-block">
+                    @(plan.Analyze ? "Actual plan: the query ran" : "Estimated plan: the query did not run") · @Format.Ms(plan.ElapsedMs)
+                </MudText>
+                <pre class="sql plan">@plan.Text</pre>
+            }
+        </div>
+    }
     @if (_showRows && Series?.Median?.Result is { } result)
     {
         <div class="rows-preview">
@@ -89,11 +124,49 @@
     [Parameter] public string? Progress { get; set; }
     [Parameter] public string? Sql { get; set; }
     [Parameter] public double ScaleMs { get; set; }
+
+    /// <summary>Returns the plan: false = estimated (EXPLAIN), true = actual (EXPLAIN ANALYZE, runs the query).</summary>
+    [Parameter] public Func<bool, CancellationToken, Task<AnalyticPlan>>? Explain { get; set; }
+
+    /// <summary>How to read this engine's plan.</summary>
+    [Parameter] public string? PlanHelp { get; set; }
+
+    /// <summary>True while measurements run: a plan would compete with them for the CPU.</summary>
+    [Parameter] public bool Busy { get; set; }
     [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
 
     private bool _showSql;
+    private bool _showPlan;
+    private bool _planLoading;
+    private AnalyticPlan? _plan;
+    private string? _planError;
+    private readonly CancellationTokenSource _disposed = new();
     private bool _showRows;
 
     private static string AllRuns(ApproachSeries series) =>
         "Every run: " + string.Join(", ", series.Runs.Select(r => Format.Ms(r.TotalMs)));
+
+    private async Task LoadPlanAsync(bool analyze)
+    {
+        _planLoading = true;
+        _planError = null;
+        try
+        {
+            _plan = await Explain!(analyze, _disposed.Token);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _planError = e.Message;
+        }
+        finally
+        {
+            _planLoading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed.Cancel();
+        _disposed.Dispose();
+    }
 }

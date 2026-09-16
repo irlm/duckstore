@@ -114,3 +114,9 @@ public sealed record AnalyticResult
 }
 
 public sealed record AnalyticSql(string Id, string Sql);
+
+/// <summary>
+/// A query plan as text. Analyze = false: the plan the engine chose, with estimated rows (the query does not run).
+/// Analyze = true: the query really ran, and the plan shows the actual rows and time of every step.
+/// </summary>
+public sealed record AnalyticPlan(string AnalyticId, string Engine, bool Analyze, string Text, double ElapsedMs);

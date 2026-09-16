@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using DuckDB.NET.Data;
 using DuckStore.Analytics.Warehouse;
 using DuckStore.Contracts;
@@ -25,10 +26,7 @@ public sealed class AnalyticsRunner(DuckDbWarehouse warehouse)
         await using var connection = await warehouse.OpenAsync(ct); // not timed, like a pooled Postgres connection
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        if (sql.Contains("$customer_id", StringComparison.Ordinal))
-        {
-            command.Parameters.Add(new DuckDBParameter("customer_id", request.CustomerId ?? 0));
-        }
+        AddParameters(command, sql, request);
 
         var clock = Stopwatch.StartNew();
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -65,6 +63,34 @@ public sealed class AnalyticsRunner(DuckDbWarehouse warehouse)
             ExecuteMs = executeMs,
             ReadRowsMs = clock.Elapsed.TotalMilliseconds - executeMs,
         };
+    }
+
+    // EXPLAIN shows the plan DuckDB chose. EXPLAIN ANALYZE also runs the query and adds
+    // the rows and time of every operator. Both return the plan as text in the last column.
+    public async Task<AnalyticPlan> ExplainAsync(string id, AnalyticRequest request, bool analyze, CancellationToken ct)
+    {
+        var sql = SqlFor(id);
+        await using var connection = await warehouse.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = (analyze ? "EXPLAIN ANALYZE\n" : "EXPLAIN\n") + sql;
+        AddParameters(command, sql, request);
+
+        var clock = Stopwatch.StartNew();
+        var text = new StringBuilder();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            text.AppendLine(reader.GetString(reader.FieldCount - 1));
+        }
+        return new AnalyticPlan(id, "duckdb", analyze, text.ToString(), clock.Elapsed.TotalMilliseconds);
+    }
+
+    private static void AddParameters(DuckDBCommand command, string sql, AnalyticRequest request)
+    {
+        if (sql.Contains("$customer_id", StringComparison.Ordinal))
+        {
+            command.Parameters.Add(new DuckDBParameter("customer_id", request.CustomerId ?? 0));
+        }
     }
 
     // Embedded as "Analytics.<id>.duckdb.sql" (see the .csproj).

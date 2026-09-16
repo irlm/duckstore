@@ -124,8 +124,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         {
             await using var connection = await postgres.OpenConnectionAsync(ct); // pooled; not timed
             await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 1800 };
-            if (sql.Contains("@max_order_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("max_order_id", context.MaxOrderId);
-            if (sql.Contains("@customer_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("customer_id", context.CustomerId);
+            AddParameters(command, sql, context);
 
             var clock = Stopwatch.StartNew();
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -199,6 +198,38 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         {
             return new ApproachRun(DuckDbApproach, null, [], 0, null, e.Message);
         }
+    }
+
+    // EXPLAIN shows the plan Postgres chose. ANALYZE also runs the query and adds the actual
+    // rows and times; BUFFERS adds the pages read from memory (hit) and from disk (read);
+    // SETTINGS lists the planner settings that differ from the defaults.
+    public async Task<AnalyticPlan> ExplainPostgresAsync(string id, ComparisonContext context, bool analyze, CancellationToken ct = default)
+    {
+        var sql = PostgresSqlFor(id);
+        await using var connection = await postgres.OpenConnectionAsync(ct);
+        await using var command = new NpgsqlCommand((analyze ? "EXPLAIN (ANALYZE, BUFFERS, SETTINGS)\n" : "EXPLAIN (SETTINGS)\n") + sql, connection)
+        {
+            CommandTimeout = 1800,
+        };
+        AddParameters(command, sql, context);
+
+        var clock = Stopwatch.StartNew();
+        var lines = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            lines.Add(reader.GetString(0));
+        }
+        return new AnalyticPlan(id, "postgres", analyze, string.Join('\n', lines), clock.Elapsed.TotalMilliseconds);
+    }
+
+    public Task<AnalyticPlan> ExplainDuckDbAsync(string id, ComparisonContext context, bool analyze, CancellationToken ct = default) =>
+        analytics.PlanAsync(id, new AnalyticRequest(context.MaxOrderId, context.CustomerId), analyze, ct);
+
+    private static void AddParameters(NpgsqlCommand command, string sql, ComparisonContext context)
+    {
+        if (sql.Contains("@max_order_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("max_order_id", context.MaxOrderId);
+        if (sql.Contains("@customer_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("customer_id", context.CustomerId);
     }
 
     public static ResultCheck Check(AnalyticResult? a, AnalyticResult? b)

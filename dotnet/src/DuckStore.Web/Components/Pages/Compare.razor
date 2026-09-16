@@ -102,10 +102,12 @@
         <MudGrid Spacing="4">
             <MudItem xs="12" md="6">
                 <ApproachPanel Title="Postgres direct" Path="web → Postgres (store tables)" Series="s.Measurement?.Postgres" Progress="@s.PostgresProgress"
+                               Explain="(analyze, ct) => Runner.ExplainPostgresAsync(analytic.Id, _context!, analyze, ct)" PlanHelp="@PostgresPlanHelp" Busy="_busy"
                                Sql="@ComparisonRunner.PostgresSqlFor(analytic.Id)" ScaleMs="Scale(s)" />
             </MudItem>
             <MudItem xs="12" md="6">
                 <ApproachPanel Title="DuckDB service" Path="web → HTTP → analytics service → DuckDB (star schema)" Series="s.Measurement?.DuckDb" Progress="@s.DuckDbProgress"
+                               Explain="(analyze, ct) => Runner.ExplainDuckDbAsync(analytic.Id, _context!, analyze, ct)" PlanHelp="@DuckDbPlanHelp" Busy="_busy"
                                Sql="@(_duckSql.GetValueOrDefault(analytic.Id) ?? "(ask the analytics service)")" ScaleMs="Scale(s)" />
             </MudItem>
         </MudGrid>
@@ -143,6 +145,17 @@
     private bool _busy;
     private bool _runningAll;
     private CancellationTokenSource _cts = new();
+
+    private const string PostgresPlanHelp =
+        "Read from the most indented line up: it runs first. \"actual time=A..B\" is ms until the first and the last row, " +
+        "per loop; compare \"rows\" (estimated) with \"actual rows\". \"Buffers: shared hit\" = pages found in memory, " +
+        "\"read\" = pages read from disk, like logical and physical reads in SET STATISTICS IO. " +
+        "\"Workers Launched\" = parallel workers, like MAXDOP.";
+
+    private const string DuckDbPlanHelp =
+        "Read from the bottom boxes up: the scans run first. Each box is one operator; with the actual plan it shows " +
+        "the rows it produced and its time. A scan lists only the columns it reads and the filters pushed into it. " +
+        "HASH_GROUP_BY and HASH_JOIN work on thousands of rows at a time, like batch mode in SQL Server.";
 
     private static readonly (PhaseKind, string)[] Legend =
     [

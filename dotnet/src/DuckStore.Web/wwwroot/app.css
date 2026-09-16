@@ -85,3 +85,9 @@ pre.sql {
     overflow: auto;
     margin-top: 6px;
 }
+
+pre.plan {
+    font-size: 11.5px;
+    line-height: 1.3;
+    max-height: 640px;
+}

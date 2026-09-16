@@ -34,5 +34,9 @@ public static class AnalyticsEndpoints
                 return Results.Bytes(bytes, "application/json");
             })
             .WithSummary("Run one Compare question on DuckDB; timings in the Server-Timing header");
+
+        analytics.MapPost("/{id}/plan", (string id, AnalyticRequest request, bool? analyze, AnalyticsRunner runner, CancellationToken ct) =>
+                runner.ExplainAsync(id, request, analyze ?? false, ct))
+            .WithSummary("The DuckDB plan of one Compare question: EXPLAIN, or EXPLAIN ANALYZE with analyze=true (runs the query)");
     }
 }

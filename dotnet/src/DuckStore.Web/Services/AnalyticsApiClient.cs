@@ -35,6 +35,13 @@ public sealed class AnalyticsApiClient(HttpClient http)
     public async Task<IReadOnlyList<AnalyticSql>> AnalyticsSqlAsync(CancellationToken ct = default) =>
         await GetAsync<List<AnalyticSql>>("api/analytics/", ct);
 
+    public async Task<AnalyticPlan> PlanAsync(string id, AnalyticRequest request, bool analyze, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"api/analytics/{id}/plan?analyze={(analyze ? "true" : "false")}", request, ct);
+        await EnsureSuccessAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync<AnalyticPlan>(ct))!;
+    }
+
     /// <summary>Runs one Compare question. The caller reads the body and the Server-Timing header.</summary>
     public async Task<HttpResponseMessage> PostAnalyticAsync(string id, AnalyticRequest request, CancellationToken ct = default)
     {
