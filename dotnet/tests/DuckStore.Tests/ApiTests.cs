@@ -144,11 +144,11 @@ public sealed class DatabasesFactAttribute : FactAttribute
         }
     }
 
-    // The repository root is the folder that has go.mod.
+    // The repository root is the folder that has docker-compose.yml.
     private static string WarehousePath()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "go.mod")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "docker-compose.yml")))
         {
             dir = dir.Parent;
         }

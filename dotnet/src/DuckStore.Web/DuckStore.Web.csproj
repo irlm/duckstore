@@ -8,6 +8,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DuckStore.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The ETL SQL lives in the top-level etl/ folder, shared with the Go version.
+         It is compiled into this assembly, so the app needs no files at run time. -->
+    <EmbeddedResource Include="..\..\..\etl\*.sql" LogicalName="Etl.%(Filename)%(Extension)" Link="Etl\Sql\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.86" />
     <PackageReference Include="DuckDB.NET.Data.Full" Version="1.5.5" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />

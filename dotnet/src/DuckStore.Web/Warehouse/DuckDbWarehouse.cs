@@ -3,7 +3,7 @@ using DuckDB.NET.Data;
 
 namespace DuckStore.Web.Warehouse;
 
-// Read-only access to the DuckDB warehouse built by the ETL (`make etl`).
+// Read-only access to the DuckDB warehouse built by the ETL (WarehouseBuilder).
 //
 // DuckDB is a library: there is no server to connect to. This class keeps one
 // in-memory DuckDB instance with the warehouse file attached READ_ONLY:
@@ -27,10 +27,10 @@ public sealed class DuckDbWarehouse : IDisposable
     private DuckDBConnection? _root;
     private (DateTime WrittenAt, long Length) _stamp;
 
-    public DuckDbWarehouse(IConfiguration config, IHostEnvironment env, ILogger<DuckDbWarehouse> log)
+    public DuckDbWarehouse(WarehouseSettings settings, ILogger<DuckDbWarehouse> log)
     {
-        _path = Path.GetFullPath(Path.Combine(env.ContentRootPath, config["Warehouse:Path"] ?? "../../../data/warehouse.duckdb"));
-        _threads = config.GetValue("Warehouse:Threads", 0);
+        _path = settings.WarehousePath;
+        _threads = settings.Threads;
         _log = log;
     }
 
@@ -90,4 +90,4 @@ public sealed class DuckDbWarehouse : IDisposable
 }
 
 public sealed class WarehouseNotBuiltException(string path)
-    : Exception($"The warehouse file {path} does not exist yet. Run `make etl` in the duckstore folder.");
+    : Exception($"The warehouse file {path} does not exist yet. Run the ETL: the ETL page, or `make dotnet-etl`.");
