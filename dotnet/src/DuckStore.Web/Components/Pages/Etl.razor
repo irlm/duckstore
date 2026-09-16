@@ -1,8 +1,7 @@
 @page "/etl"
 @implements IDisposable
-@inject EtlService EtlService
-@inject ReportService ReportService
-@inject IConfiguration Configuration
+@inject AnalyticsApiClient Analytics
+@inject StoreQueries Store
 @inject ISnackbar Snackbar
 
 <PageTitle>ETL</PageTitle>
@@ -11,19 +10,24 @@
     <MudText Typo="Typo.h4">ETL</MudText>
     <EngineChip Engine="Postgres" Detail="source" />
     <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
-    <EngineChip Engine="DuckDB" Detail="warehouse" />
+    <EngineChip Engine="DuckDB" Detail="analytics service" />
     <MudSpacer />
     <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlayArrow"
-               OnClick="Start" Disabled="@(_run?.IsRunning == true)">
+               OnClick="StartAsync" Disabled="@(_run?.IsRunning == true || _starting)">
         @(_run?.IsRunning == true ? "Running…" : "Run ETL now")
     </MudButton>
 </MudStack>
 
 <MudText Typo="Typo.body1" Class="mb-4" Style="max-width: 80ch">
-    The ETL copies the store from Postgres into a <b>new</b> DuckDB file, builds the star schema, exports Parquet,
-    then renames the new file over the old one. The reports keep answering from the old file until the swap,
-    and switch on their next query. The steps are the SQL files in <code>etl/</code>, the same files the Go version runs.
+    The ETL runs inside the <b>analytics service</b>, the only process that writes the DuckDB file. It copies the store
+    from Postgres into a <b>new</b> file, builds the star schema, exports Parquet, then renames the new file over the old
+    one. Reports keep answering from the old file until the swap. This page asks the service for progress every second.
 </MudText>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">@_error</MudAlert>
+}
 
 @if (_run is not null)
 {
@@ -51,84 +55,111 @@
         <StepTable Steps="@_run.Steps.Select(s => new BuildStep(s.Number, s.Label, s.Rows, s.Duration.TotalSeconds)).ToList()" />
     </MudPaper>
 }
-else
+else if (_warehouse is not null && _last is not null)
 {
     <MudPaper Outlined Class="pa-4 mb-4">
         <MudText Typo="Typo.h6" GutterBottom>Build in use</MudText>
-        @if (_lastError is not null)
-        {
-            <MudAlert Severity="Severity.Warning">@_lastError</MudAlert>
-        }
-        else if (_last is null)
-        {
-            <MudProgressLinear Indeterminate Color="Color.Secondary" />
-        }
-        else
-        {
-            <MudText Typo="Typo.body2" Class="mb-2">
-                Built @_status?.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC, orders up to #@_status?.MaxOrderId.ToString("N0").
-                Postgres has @_status?.OrdersSinceEtl.ToString("N0") newer orders.
-            </MudText>
-            <StepTable Steps="@_last.Rows" />
-        }
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Built @_warehouse.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC in @_warehouse.BuildSeconds.ToString("F1") s,
+            orders up to #@_warehouse.MaxOrderId.ToString("N0"), @((_warehouse.SizeBytes / 1e6).ToString("N0")) MB,
+            DuckDB @_warehouse.DuckDbVersion. Postgres has @_ordersSinceEtl.ToString("N0") newer orders.
+        </MudText>
+        <StepTable Steps="@_last.Rows" />
     </MudPaper>
+}
+else if (_error is null)
+{
+    <MudProgressLinear Indeterminate Color="Color.Secondary" />
 }
 
 <MudText Typo="Typo.body2" Style="opacity: .75">
-    Other ways to run it: <code>POST /api/etl/runs</code>, <code>make dotnet-etl</code> in a terminal, or a schedule
-    (<code>Etl:ScheduleMinutes</code> in appsettings.json, now @(_scheduleMinutes > 0 ? $"every {_scheduleMinutes} minutes" : "off")).
-    Only one ETL runs at a time, across all of them.
+    Other ways to run it: <code>POST /api/etl/runs</code> on the analytics service, <code>dotnet DuckStore.Analytics.dll etl</code>,
+    or a schedule (<code>Etl:ScheduleMinutes</code>). Only one ETL runs at a time.
 </MudText>
 
 @code {
     private EtlRunSnapshot? _run;
+    private WarehouseInfo? _warehouse;
     private Report<BuildStep>? _last;
-    private WarehouseStatus? _status;
-    private string? _lastError;
-    private int _scheduleMinutes;
+    private long _ordersSinceEtl;
+    private string? _error;
+    private bool _starting;
+    private readonly CancellationTokenSource _stop = new();
 
     protected override async Task OnInitializedAsync()
     {
-        _scheduleMinutes = Configuration.GetValue("Etl:ScheduleMinutes", 0);
-        _run = EtlService.Current;
-        EtlService.Changed += OnChanged;
-        if (_run is null)
-        {
-            await LoadLastBuildAsync();
-        }
+        await RefreshAsync();
+        _ = PollAsync();
     }
 
-    private async Task LoadLastBuildAsync()
+    private async Task RefreshAsync()
     {
         try
         {
-            _status = await ReportService.StatusAsync();
-            _last = await ReportService.LastBuildStepsAsync();
+            _run = await Analytics.EtlStatusAsync(_stop.Token);
+            if (_run is null)
+            {
+                _warehouse = await Analytics.WarehouseAsync(_stop.Token);
+                _last = await Analytics.LastBuildStepsAsync(_stop.Token);
+                _ordersSinceEtl = await Store.OrdersAfterAsync(_warehouse.MaxOrderId, _stop.Token);
+            }
+            _error = null;
         }
-        catch (WarehouseNotBuiltException e)
+        catch (AnalyticsServiceException e)
         {
-            _lastError = e.Message;
+            _error = e.Message;
+        }
+        catch (HttpRequestException e)
+        {
+            _error = $"The analytics service is not reachable at {Analytics.BaseAddress}: {e.Message}";
         }
     }
 
-    private void Start()
+    // While a run is in progress, ask the service for its status every second.
+    private async Task PollAsync()
     {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         try
         {
-            _run = EtlService.Start("the ETL page");
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+            {
+                if (_run?.IsRunning != true)
+                {
+                    continue;
+                }
+                await RefreshAsync();
+                await InvokeAsync(StateHasChanged);
+            }
         }
-        catch (EtlAlreadyRunningException e)
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task StartAsync()
+    {
+        _starting = true;
+        try
+        {
+            _run = await Analytics.StartEtlAsync();
+        }
+        catch (AnalyticsServiceException e)
         {
             Snackbar.Add(e.Message, Severity.Warning);
         }
+        catch (HttpRequestException e)
+        {
+            Snackbar.Add($"The analytics service is not reachable: {e.Message}", Severity.Error);
+        }
+        finally
+        {
+            _starting = false;
+        }
     }
 
-    // Called from the ETL thread: hop onto the component's dispatcher to re-render.
-    private void OnChanged() => InvokeAsync(() =>
+    public void Dispose()
     {
-        _run = EtlService.Current;
-        StateHasChanged();
-    });
-
-    public void Dispose() => EtlService.Changed -= OnChanged;
+        _stop.Cancel();
+        _stop.Dispose();
+    }
 }

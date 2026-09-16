@@ -4,14 +4,11 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Dapper;
 using DuckDB.NET.Data;
-using DuckStore.Web.Warehouse;
+using DuckStore.Analytics.Warehouse;
+using DuckStore.Contracts;
 using Npgsql;
 
-namespace DuckStore.Web.Etl;
-
-public sealed record EtlStep(int Number, string Label, long Rows, TimeSpan Duration);
-
-public sealed record EtlResult(long MaxOrderId, IReadOnlyList<EtlStep> Steps, TimeSpan Duration, long SizeBytes, string WarehousePath);
+namespace DuckStore.Analytics.Etl;
 
 /// <summary>Where the ETL writes. Tests pass temporary paths; the app uses <see cref="WarehouseSettings"/>.</summary>
 public sealed record WarehouseTarget(string WarehousePath, string ParquetDir);
@@ -87,6 +84,11 @@ public sealed class WarehouseBuilder(WarehouseSettings settings, IConfiguration 
 
                 // Setup: UTC session, postgres extension, attach the store read-only.
                 await Run(null, "SET TimeZone = 'UTC'");
+                if (settings.ExtensionDirectory is { } extensions)
+                {
+                    // The Docker image installs the extension at build time into this folder.
+                    await Run(null, $"SET extension_directory = {Quote(extensions)}");
+                }
                 await Run(null, "INSTALL postgres");
                 await Run(null, "LOAD postgres");
                 await Run(null, $"ATTACH {Quote(ToLibpq(config.GetConnectionString("Store")!))} AS pg (TYPE postgres, READ_ONLY)");

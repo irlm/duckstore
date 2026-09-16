@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace DuckStore.Web.Etl;
+namespace DuckStore.Analytics.Etl;
 
 /// <summary>A statement of a SQL script, with the label of its "-- step:" comment.</summary>
 public sealed record SqlStatement(string Sql, string? Label);

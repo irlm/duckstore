@@ -1,12 +1,13 @@
 @page "/reports"
 @using System.Globalization
-@inject ReportService ReportService
+@inject AnalyticsApiClient Analytics
+@inject StoreQueries Store
 
 <PageTitle>Reports</PageTitle>
 
 <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
     <MudText Typo="Typo.h4">Reports</MudText>
-    <EngineChip Engine="DuckDB" Detail="Dapper" />
+    <EngineChip Engine="DuckDB" Detail="analytics service" />
     <MudSpacer />
     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAllAsync" Disabled="_loading">Refresh</MudButton>
 </MudStack>
@@ -21,8 +22,9 @@
 {
     <MudText Typo="Typo.body2" Class="mb-4" Style="opacity: .8">
         Warehouse built @_status.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC, orders up to #@_status.MaxOrderId.ToString("N0").
-        Postgres has @_status.OrdersSinceEtl.ToString("N0") newer orders (checked live with a Postgres query).
-        All @_sections report queries below ran in parallel in @_totalMs.ToString("N0") ms.
+        Postgres has @_ordersSinceEtl.ToString("N0") newer orders (checked live with a Postgres query).
+        The @_sections report requests below went to the analytics service over HTTP, in parallel, in @_totalMs.ToString("N0") ms;
+        each card shows the time DuckDB itself spent.
     </MudText>
 }
 
@@ -219,13 +221,14 @@
 </MudGrid>
 
 @code {
-    private WarehouseStatus? _status;
     private Report<KpiPeriod>? _kpis;
     private Report<MonthlyRevenue>? _monthly;
     private Report<TopProduct>? _top;
+    private WarehouseInfo? _status;
     private Report<ReturnRate>? _returns;
     private Report<CountrySales>? _countries;
     private TableReport? _pivot;
+    private long _ordersSinceEtl;
     private string? _error;
     private bool _loading;
     private int _days = 90;
@@ -253,27 +256,32 @@
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            // Each report gets its own DuckDB connection, so they can run at the same time.
-            var status = ReportService.StatusAsync();
-            var kpis = ReportService.KpisAsync();
-            var monthly = ReportService.MonthlyRevenueAsync();
-            var top = ReportService.TopProductsAsync(_days);
-            var returns = ReportService.ReturnRatesAsync();
-            var countries = ReportService.SalesByCountryAsync();
-            var pivot = ReportService.RevenueByDepartmentAndYearAsync();
+            // Seven HTTP requests at the same time; the service gives each its own DuckDB connection.
+            var status = Analytics.WarehouseAsync();
+            var kpis = Analytics.KpisAsync();
+            var monthly = Analytics.MonthlyRevenueAsync();
+            var top = Analytics.TopProductsAsync(_days);
+            var returns = Analytics.ReturnRatesAsync();
+            var countries = Analytics.SalesByCountryAsync();
+            var pivot = Analytics.RevenueByDepartmentAndYearAsync();
             await Task.WhenAll(status, kpis, monthly, top, returns, countries, pivot);
 
             (_status, _kpis, _monthly, _top, _returns, _countries, _pivot) =
                 (status.Result, kpis.Result, monthly.Result, top.Result, returns.Result, countries.Result, pivot.Result);
             _sections = 7;
             _totalMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            _ordersSinceEtl = await Store.OrdersAfterAsync(_status.MaxOrderId);
 
             _monthlySeries = [new ChartSeries<double> { Name = "Revenue (USD millions)", Data = _monthly.Rows.Select(r => (double)r.RevenueUsd / 1e6).ToArray() }];
             _monthlyLabels = _monthly.Rows.Select((r, i) => r.Month.Month == 1 || i == 0 ? r.Month.ToString("MMM yyyy") : "").ToArray();
         }
-        catch (WarehouseNotBuiltException e)
+        catch (AnalyticsServiceException e)
         {
             _error = e.Message;
+        }
+        catch (HttpRequestException e)
+        {
+            _error = $"The analytics service is not reachable at {Analytics.BaseAddress}: {e.Message}";
         }
         finally
         {
@@ -285,7 +293,7 @@
     {
         _days = days;
         _top = null;
-        _top = await ReportService.TopProductsAsync(days);
+        _top = await Analytics.TopProductsAsync(days);
     }
 
     private sealed record Tile(string Label, string Value, double? Delta);

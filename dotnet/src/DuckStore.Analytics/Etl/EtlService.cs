@@ -1,12 +1,10 @@
-namespace DuckStore.Web.Etl;
+using DuckStore.Contracts;
 
-public sealed record EtlRunSnapshot(
-    Guid Id, string Trigger, DateTime StartedAt, DateTime? FinishedAt, bool IsRunning,
-    IReadOnlyList<EtlStep> Steps, int ExpectedSteps, EtlResult? Result, string? Error);
+namespace DuckStore.Analytics.Etl;
 
-// Runs the ETL in the background of the web app and remembers the current (or
-// last) run, so the ETL page and the API can show its progress.
-// The ETL page, POST /api/etl/runs and the schedule all go through here.
+// Runs the ETL in the background of the analytics service and remembers the
+// current (or last) run, so the web app's ETL page can show its progress.
+// POST /api/etl/runs, the schedule and the startup build all go through here.
 public sealed class EtlService(WarehouseBuilder builder, IHostApplicationLifetime lifetime, ILogger<EtlService> log)
 {
     private readonly Lock _gate = new();
@@ -95,13 +93,27 @@ public sealed class EtlService(WarehouseBuilder builder, IHostApplicationLifetim
     }
 }
 
-// Optional: run the ETL every Etl:ScheduleMinutes (0 = off). The "batch job" of
-// a warehouse, hosted inside the web app. In production this is often a
-// separate worker or a cron job running `dotnet DuckStore.Web.dll etl`.
-public sealed class EtlSchedule(EtlService etl, IConfiguration config, ILogger<EtlSchedule> log) : BackgroundService
+// Optional: build the warehouse at startup when the file does not exist yet
+// (Etl:RunOnStartup, handy for the first `docker compose up`), and run the ETL
+// every Etl:ScheduleMinutes (0 = off). In production the schedule is often a
+// cron job running `dotnet DuckStore.Analytics.dll etl` instead.
+public sealed class EtlSchedule(EtlService etl, DuckStore.Analytics.Warehouse.WarehouseSettings settings, IConfiguration config, ILogger<EtlSchedule> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (config.GetValue("Etl:RunOnStartup", false) && !File.Exists(settings.WarehousePath))
+        {
+            log.LogInformation("No warehouse at {Path}: building it now", settings.WarehousePath);
+            try
+            {
+                await etl.RunAsync("startup", stoppingToken);
+            }
+            catch (EtlAlreadyRunningException)
+            {
+                // someone else is building it
+            }
+        }
+
         var minutes = config.GetValue("Etl:ScheduleMinutes", 0);
         if (minutes <= 0)
         {

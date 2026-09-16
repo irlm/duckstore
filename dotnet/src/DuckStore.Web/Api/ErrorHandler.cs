@@ -1,6 +1,4 @@
-using DuckStore.Web.Etl;
 using DuckStore.Web.Services;
-using DuckStore.Web.Warehouse;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,8 +14,6 @@ public sealed class ErrorHandler(IProblemDetailsService problemDetails) : IExcep
             NotFoundException => (StatusCodes.Status404NotFound, "Not found"),
             ConflictException => (StatusCodes.Status409Conflict, "Conflict"),
             InputException => (StatusCodes.Status400BadRequest, "Invalid input"),
-            WarehouseNotBuiltException => (StatusCodes.Status503ServiceUnavailable, "Warehouse not built"),
-            EtlAlreadyRunningException => (StatusCodes.Status409Conflict, "ETL already running"),
             _ => (0, ""),
         };
         if (status == 0)

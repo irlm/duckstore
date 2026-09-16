@@ -1,8 +1,11 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/DuckStore.Contracts/DuckStore.Contracts.csproj" />
+    <Project Path="src/DuckStore.Analytics/DuckStore.Analytics.csproj" />
     <Project Path="src/DuckStore.Web/DuckStore.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/DuckStore.Tests/DuckStore.Tests.csproj" />
+    <Project Path="tests/DuckStore.Analytics.Tests/DuckStore.Analytics.Tests.csproj" />
+    <Project Path="tests/DuckStore.Web.Tests/DuckStore.Web.Tests.csproj" />
   </Folder>
 </Solution>

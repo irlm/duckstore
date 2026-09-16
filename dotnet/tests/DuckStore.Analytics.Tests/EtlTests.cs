@@ -1,12 +1,13 @@
 using Dapper;
 using DuckDB.NET.Data;
-using DuckStore.Web.Data;
-using DuckStore.Web.Etl;
+using DuckStore.Analytics.Etl;
+using DuckStore.Contracts;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
-namespace DuckStore.Tests;
+namespace DuckStore.Analytics.Tests;
 
 public sealed class EtlTests(WebApplicationFactory<Program> factory) : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
@@ -38,12 +39,13 @@ public sealed class EtlTests(WebApplicationFactory<Program> factory) : IClassFix
         Assert.Equal(result.Steps.Count, progress.Count);
 
         // Order lines of non-cancelled orders up to the watermark, counted by Postgres...
-        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<StoreDbContext>>().CreateDbContextAsync();
-        var expected = await db.Database.SqlQuery<long>($"""
-            SELECT count(*) AS "Value"
+        var connectionString = factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("Store");
+        await using var pg = new NpgsqlConnection(connectionString);
+        var expected = await pg.ExecuteScalarAsync<long>("""
+            SELECT count(*)
             FROM store.order_items oi JOIN store.orders o ON o.id = oi.order_id
-            WHERE o.status <> 'cancelled' AND o.id <= {result.MaxOrderId}
-            """).SingleAsync();
+            WHERE o.status <> 'cancelled' AND o.id <= @maxOrderId
+            """, new { maxOrderId = result.MaxOrderId });
 
         // ...must equal the rows of dw.fact_sales counted by DuckDB (every line found its product version).
         await using var duck = new DuckDBConnection($"Data Source={Target.WarehousePath};ACCESS_MODE=READ_ONLY");

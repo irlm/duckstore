@@ -1,6 +1,6 @@
-using DuckStore.Web.Etl;
+using DuckStore.Analytics.Etl;
 
-namespace DuckStore.Web.Api;
+namespace DuckStore.Analytics.Api;
 
 public static class EtlEndpoints
 {

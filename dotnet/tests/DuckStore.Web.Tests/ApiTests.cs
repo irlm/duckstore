@@ -2,15 +2,16 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using DuckStore.Web.Data;
 using DuckStore.Web.Services;
-using DuckStore.Web.Warehouse;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace DuckStore.Tests;
+namespace DuckStore.Web.Tests;
 
-// Integration tests: the real app in memory (WebApplicationFactory), talking to
-// the real Postgres and the real DuckDB warehouse. They are skipped when those
-// are not available (run `make up seed etl` in the duckstore folder first).
+// Integration tests: the real web app in memory (WebApplicationFactory), talking
+// to the real Postgres. Skipped when Postgres is not available (`make up seed`).
 public sealed class ApiTests(WebApplicationFactory<Program> factory) : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _http = factory.CreateClient();
@@ -74,31 +75,12 @@ public sealed class ApiTests(WebApplicationFactory<Program> factory) : IClassFix
     [DatabasesFact]
     public async Task A_sold_product_cannot_be_deleted()
     {
-        var top = await _http.GetFromJsonAsync<Report<TopProduct>>("/api/reports/top-products?days=365");
-        var sold = top!.Rows.First().ProductId; // the warehouse says it was sold
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<StoreDbContext>>().CreateDbContextAsync();
+        var sold = await db.Database.SqlQuery<long>($"SELECT product_id AS \"Value\" FROM store.order_items LIMIT 1").SingleAsync();
 
         var response = await _http.DeleteAsync($"/api/products/{sold}");
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-    }
-
-    [DatabasesFact]
-    public async Task Reports_return_rows_sql_and_timing()
-    {
-        var monthly = await _http.GetFromJsonAsync<Report<MonthlyRevenue>>("/api/reports/monthly-revenue");
-        Assert.NotNull(monthly);
-        Assert.True(monthly.Rows.Count >= 12);
-        Assert.All(monthly.Rows, r => Assert.True(r.RevenueUsd > 0));
-        Assert.Contains("dw.fact_sales", monthly.Sql);
-
-        var pivot = await _http.GetFromJsonAsync<TableReport>("/api/reports/revenue-by-department-year");
-        Assert.NotNull(pivot);
-        Assert.Equal("department", pivot.Columns[0]);
-        Assert.True(pivot.Columns.Count >= 3, "PIVOT should create one column per year");
-
-        var status = await _http.GetFromJsonAsync<WarehouseStatus>("/api/reports/status");
-        Assert.True(status!.MaxOrderId > 0);
-        Assert.True(status.OrdersSinceEtl >= 0);
     }
 
     private static ProductInput NewInput(string sku, decimal price) => new()
@@ -116,7 +98,7 @@ public sealed class ApiTests(WebApplicationFactory<Program> factory) : IClassFix
     };
 }
 
-// A [Fact] that is skipped when Postgres or the warehouse file is missing.
+// A [Fact] that is skipped when Postgres is not reachable.
 public sealed class DatabasesFactAttribute : FactAttribute
 {
     public DatabasesFactAttribute()
@@ -124,10 +106,6 @@ public sealed class DatabasesFactAttribute : FactAttribute
         if (!PostgresIsUp())
         {
             Skip = "Postgres is not reachable on 127.0.0.1:55432. Run `make up && make seed`.";
-        }
-        else if (!File.Exists(WarehousePath()))
-        {
-            Skip = "The DuckDB warehouse is not built. Run `make etl`.";
         }
     }
 
@@ -142,16 +120,5 @@ public sealed class DatabasesFactAttribute : FactAttribute
         {
             return false;
         }
-    }
-
-    // The repository root is the folder that has docker-compose.yml.
-    private static string WarehousePath()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "docker-compose.yml")))
-        {
-            dir = dir.Parent;
-        }
-        return dir is null ? "" : Path.Combine(dir.FullName, "data", "warehouse.duckdb");
     }
 }

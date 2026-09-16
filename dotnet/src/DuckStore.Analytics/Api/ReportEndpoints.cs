@@ -1,17 +1,18 @@
-using DuckStore.Web.Warehouse;
+using DuckStore.Analytics.Warehouse;
 
-namespace DuckStore.Web.Api;
+namespace DuckStore.Analytics.Api;
 
 // Report endpoints read the DuckDB warehouse. Each response includes the SQL
-// and how long DuckDB took, so API clients can learn from it too.
+// and how long DuckDB took.
 public static class ReportEndpoints
 {
     public static void MapReportEndpoints(this IEndpointRouteBuilder app)
     {
-        var reports = app.MapGroup("/api/reports").WithTags("Reports (DuckDB)");
+        app.MapGet("/api/warehouse", (ReportService r, CancellationToken ct) => r.InfoAsync(ct))
+            .WithTags("Warehouse")
+            .WithSummary("When the warehouse was built, the ETL watermark, file size and DuckDB version");
 
-        reports.MapGet("/status", (ReportService r, CancellationToken ct) => r.StatusAsync(ct))
-            .WithSummary("When the warehouse was built, and how many orders Postgres has that it does not");
+        var reports = app.MapGroup("/api/reports").WithTags("Reports");
         reports.MapGet("/kpis", (ReportService r, CancellationToken ct) => r.KpisAsync(ct))
             .WithSummary("Last 30 days vs the 30 days before");
         reports.MapGet("/monthly-revenue", (ReportService r, CancellationToken ct) => r.MonthlyRevenueAsync(ct));
@@ -20,5 +21,6 @@ public static class ReportEndpoints
         reports.MapGet("/sales-by-country", (ReportService r, CancellationToken ct) => r.SalesByCountryAsync(ct));
         reports.MapGet("/revenue-by-department-year", (ReportService r, CancellationToken ct) => r.RevenueByDepartmentAndYearAsync(ct))
             .WithSummary("Dynamic PIVOT: one column per year");
+        reports.MapGet("/last-build-steps", (ReportService r, CancellationToken ct) => r.LastBuildStepsAsync(ct));
     }
 }

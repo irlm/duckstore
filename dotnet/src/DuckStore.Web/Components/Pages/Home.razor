@@ -1,14 +1,15 @@
 @page "/"
 @inject ProductService ProductService
-@inject ReportService ReportService
+@inject AnalyticsApiClient Analytics
+@inject StoreQueries Store
 
 <PageTitle>DuckStore</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom>One ASP.NET Core app, two databases</MudText>
+<MudText Typo="Typo.h4" GutterBottom>One application, two services, two databases</MudText>
 <MudText Typo="Typo.body1" Class="mb-6" Style="max-width: 75ch">
-    The same store as the Go project, from C#. Product screens read and write <b>Postgres</b> with EF Core (OLTP).
-    Report screens query the <b>DuckDB</b> warehouse with Dapper and plain SQL (OLAP). DuckDB is a library, so it runs
-    inside this process, next to the Postgres connection pool.
+    Product screens read and write <b>Postgres</b> with EF Core (OLTP). Report, ETL and Compare screens use the
+    <b>analytics service</b>: a separate ASP.NET Core process that owns a <b>DuckDB</b> file and answers over HTTP.
+    For the user it is one application; underneath, each part runs where it works best.
 </MudText>
 
 <MudGrid>
@@ -51,9 +52,9 @@
                 <MudText Typo="Typo.h3">@_status.MaxOrderId.ToString("N0")</MudText>
                 <MudText Typo="Typo.body2" Class="mb-4">
                     is the last order id in the warehouse, built @_status.BuiltAt.ToString("yyyy-MM-dd HH:mm") UTC.
-                    @if (_status.OrdersSinceEtl > 0)
+                    @if (_ordersSinceEtl > 0)
                     {
-                        <b>@_status.OrdersSinceEtl.ToString("N0") newer orders</b> <span>are only in Postgres until the next <code>make etl</code>.</span>
+                        <b>@_ordersSinceEtl.ToString("N0") newer orders</b> <span>are only in Postgres until the next ETL.</span>
                     }
                     else
                     {
@@ -72,16 +73,18 @@
         <thead><tr><th>Screen</th><th>Code</th><th>Database</th><th>Why this database</th></tr></thead>
         <tbody>
             <tr><td>Products</td><td>ProductService → EF Core</td><td>Postgres</td><td>Few rows by key, concurrent writes, constraints, transactions</td></tr>
-            <tr><td>Reports</td><td>ReportService → Dapper → DuckDB.NET</td><td>DuckDB file</td><td>Millions of rows scanned and aggregated, read-only</td></tr>
+            <tr><td>Reports</td><td>AnalyticsApiClient → HTTP → analytics service → DuckDB.NET</td><td>DuckDB file</td><td>Millions of rows scanned and aggregated, read-only</td></tr>
+            <tr><td>Compare</td><td>The same question twice: SQL to Postgres, and HTTP to the analytics service</td><td>Both</td><td>See where the time goes: database, transfer, JSON, network</td></tr>
             <tr><td>REST API (/api/…)</td><td>Minimal APIs over the same services</td><td>Both</td><td>Same code for the UI and for other clients</td></tr>
-            <tr><td>ETL</td><td>WarehouseBuilder runs the SQL files in <code>etl/</code></td><td>Postgres → DuckDB</td><td>A batch job that builds a new file; the reports switch to it on their own</td></tr>
+            <tr><td>ETL</td><td>The analytics service runs the SQL files in <code>etl/</code></td><td>Postgres → DuckDB</td><td>A batch job that builds a new file; the reports switch to it on their own</td></tr>
         </tbody>
     </MudSimpleTable>
 </MudPaper>
 
 @code {
     private int? _productCount;
-    private WarehouseStatus? _status;
+    private WarehouseInfo? _status;
+    private long _ordersSinceEtl;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
@@ -89,11 +92,16 @@
         var products = ProductService.ListAsync(new ProductQuery(PageSize: 1));
         try
         {
-            _status = await ReportService.StatusAsync();
+            _status = await Analytics.WarehouseAsync();
+            _ordersSinceEtl = await Store.OrdersAfterAsync(_status.MaxOrderId);
         }
-        catch (WarehouseNotBuiltException e)
+        catch (AnalyticsServiceException e)
         {
             _error = e.Message;
+        }
+        catch (HttpRequestException e)
+        {
+            _error = $"The analytics service is not reachable at {Analytics.BaseAddress}: {e.Message}";
         }
         _productCount = (await products).Total;
     }

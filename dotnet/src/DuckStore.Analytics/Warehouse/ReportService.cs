@@ -1,9 +1,8 @@
 using System.Diagnostics;
 using Dapper;
-using DuckStore.Web.Data;
-using Microsoft.EntityFrameworkCore;
+using DuckStore.Contracts;
 
-namespace DuckStore.Web.Warehouse;
+namespace DuckStore.Analytics.Warehouse;
 
 // Reports run on the DuckDB warehouse (OLAP) with Dapper and plain SQL:
 // big scans and aggregations, where EF Core would only add a layer.
@@ -13,7 +12,7 @@ namespace DuckStore.Web.Warehouse;
 //   * sum() of an INTEGER column returns HUGEINT (System.Numerics.BigInteger),
 //     so the SQL casts those sums to BIGINT.
 //   * DATE comes back as DateOnly; the SQL casts to TIMESTAMP where a DateTime is easier.
-public sealed class ReportService(DuckDbWarehouse warehouse, IDbContextFactory<StoreDbContext> postgres)
+public sealed class ReportService(DuckDbWarehouse warehouse, WarehouseSettings settings)
 {
     public Task<Report<KpiPeriod>> KpisAsync(CancellationToken ct = default) => QueryAsync<KpiPeriod>("""
         WITH bounds AS (
@@ -117,21 +116,18 @@ public sealed class ReportService(DuckDbWarehouse warehouse, IDbContextFactory<S
         return new TableReport(sql, Stopwatch.GetElapsedTime(started).TotalMilliseconds, columns, rows);
     }
 
-    public async Task<WarehouseStatus> StatusAsync(CancellationToken ct = default)
+    // What is loaded: the ETL watermark and build time, plus engine facts.
+    public async Task<WarehouseInfo> InfoAsync(CancellationToken ct = default)
     {
-        var info = await QueryAsync<EtlInfo>("""
-            SELECT built_at AS BuiltAt, max_order_id AS MaxOrderId, data_until AS DataUntil
+        await using var connection = await warehouse.OpenAsync(ct);
+        var etl = await connection.QuerySingleAsync<EtlInfo>(new CommandDefinition("""
+            SELECT built_at AS BuiltAt, max_order_id AS MaxOrderId, data_until AS DataUntil, build_seconds::DOUBLE AS BuildSeconds
             FROM dw.etl_info
-            """, null, ct);
-        var etl = info.Rows.Single();
-
-        // Freshness check on the OLTP side: orders the warehouse does not have yet.
-        // A small indexed query on Postgres, done by the application.
-        await using var db = await postgres.CreateDbContextAsync(ct);
-        var newOrders = await db.Database
-            .SqlQuery<long>($"SELECT count(*) AS \"Value\" FROM store.orders WHERE id > {etl.MaxOrderId}")
-            .SingleAsync(ct);
-        return new WarehouseStatus(etl.BuiltAt, etl.MaxOrderId, etl.DataUntil, newOrders, warehouse.FilePath);
+            """, cancellationToken: ct));
+        var version = await connection.ExecuteScalarAsync<string>("SELECT version()");
+        var threads = await connection.ExecuteScalarAsync<string>("SELECT current_setting('threads')::VARCHAR");
+        return new WarehouseInfo(etl.BuiltAt, etl.MaxOrderId, etl.DataUntil, etl.BuildSeconds, settings.WarehousePath,
+            new FileInfo(settings.WarehousePath).Length, version ?? "", threads ?? "");
     }
 
     public Task<Report<BuildStep>> LastBuildStepsAsync(CancellationToken ct = default) => QueryAsync<BuildStep>("""
@@ -149,22 +145,4 @@ public sealed class ReportService(DuckDbWarehouse warehouse, IDbContextFactory<S
     }
 }
 
-public sealed record Report<T>(string Sql, double ElapsedMs, IReadOnlyList<T> Rows);
-
-public sealed record TableReport(string Sql, double ElapsedMs, IReadOnlyList<string> Columns, IReadOnlyList<object?[]> Rows);
-
-public sealed record KpiPeriod(string Period, decimal RevenueUsd, long Orders, decimal AvgOrderUsd, long NewCustomers, long ActiveCustomers);
-
-public sealed record MonthlyRevenue(DateTime Month, decimal RevenueUsd, long Orders);
-
-public sealed record TopProduct(long ProductId, string ProductName, string Brand, string Department, long Units, decimal RevenueUsd);
-
-public sealed record ReturnRate(string Category, string Department, long UnitsSold, long UnitsReturned, double ReturnRatePct, string? TopReason);
-
-public sealed record CountrySales(string Region, string Country, long Orders, long Customers, decimal RevenueUsd);
-
-public sealed record EtlInfo(DateTime BuiltAt, long MaxOrderId, DateTime DataUntil);
-
-public sealed record WarehouseStatus(DateTime BuiltAt, long MaxOrderId, DateTime DataUntil, long OrdersSinceEtl, string FilePath);
-
-public sealed record BuildStep(int Number, string Label, long Rows, double Seconds);
+internal sealed record EtlInfo(DateTime BuiltAt, long MaxOrderId, DateTime DataUntil, double BuildSeconds);

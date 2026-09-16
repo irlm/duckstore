@@ -1,30 +1,28 @@
 using DuckStore.Web.Api;
 using DuckStore.Web.Components;
 using DuckStore.Web.Data;
-using DuckStore.Web.Etl;
 using DuckStore.Web.Services;
-using DuckStore.Web.Warehouse;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor;
 using MudBlazor.Services;
 using Scalar.AspNetCore;
 
+// The web app: UI + CRUD on Postgres. Everything DuckDB lives in the analytics
+// service (DuckStore.Analytics), which this app calls over HTTP.
 var builder = WebApplication.CreateBuilder(args);
 
 // Postgres (OLTP): EF Core, one short-lived DbContext per operation.
 builder.Services.AddDbContextFactory<StoreDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Store")));
 builder.Services.AddSingleton<ProductService>();
+builder.Services.AddSingleton<StoreQueries>();
 
-// DuckDB (OLAP): the warehouse file, read-only, with Dapper.
-builder.Services.AddSingleton<WarehouseSettings>();
-builder.Services.AddSingleton<DuckDbWarehouse>();
-builder.Services.AddSingleton<ReportService>();
-
-// ETL: Postgres -> DuckDB warehouse, from the shared SQL files in etl/.
-builder.Services.AddSingleton<WarehouseBuilder>();
-builder.Services.AddSingleton<EtlService>();
-builder.Services.AddHostedService<EtlSchedule>();
+// The analytics service (DuckDB), reached over HTTP.
+builder.Services.AddHttpClient<AnalyticsApiClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Analytics:BaseUrl"] ?? "http://127.0.0.1:5090/");
+    client.Timeout = TimeSpan.FromMinutes(15);
+});
 
 // API: OpenAPI document + Scalar UI at /scalar, errors as ProblemDetails.
 builder.Services.AddOpenApi();
@@ -37,22 +35,14 @@ builder.Services.AddMudServices(options => options.SnackbarConfiguration.Positio
 
 var app = builder.Build();
 
-// `dotnet run -- etl` builds the warehouse once and exits, without starting the web server.
-if (args is ["etl", ..])
-{
-    await app.Services.GetRequiredService<WarehouseBuilder>().BuildAsync();
-    return;
-}
-
 app.UseExceptionHandler();
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseAntiforgery();
 
 app.MapOpenApi();
 app.MapScalarApiReference();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" })).ExcludeFromDescription();
 app.MapProductEndpoints();
-app.MapReportEndpoints();
-app.MapEtlEndpoints();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

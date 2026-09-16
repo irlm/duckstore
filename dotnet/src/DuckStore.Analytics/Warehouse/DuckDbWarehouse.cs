@@ -1,7 +1,7 @@
 using Dapper;
 using DuckDB.NET.Data;
 
-namespace DuckStore.Web.Warehouse;
+namespace DuckStore.Analytics.Warehouse;
 
 // Read-only access to the DuckDB warehouse built by the ETL (WarehouseBuilder).
 //
@@ -66,8 +66,8 @@ public sealed class DuckDbWarehouse : IDisposable
             root.Execute($"ATTACH '{_path.Replace("'", "''")}' AS wh (READ_ONLY)");
             if (_threads > 0)
             {
-                // DuckDB uses every core by default. In a web API that also serves
-                // CRUD requests, leave some cores for them.
+                // DuckDB uses every core by default. Limit it when this service
+                // shares the machine with other busy services.
                 root.Execute($"SET threads = {_threads}");
             }
 
@@ -90,4 +90,4 @@ public sealed class DuckDbWarehouse : IDisposable
 }
 
 public sealed class WarehouseNotBuiltException(string path)
-    : Exception($"The warehouse file {path} does not exist yet. Run the ETL: the ETL page, or `make dotnet-etl`.");
+    : Exception($"The warehouse file {path} does not exist yet. Run the ETL (the ETL page, POST /api/etl/runs, or `dotnet DuckStore.Analytics.dll etl`).");

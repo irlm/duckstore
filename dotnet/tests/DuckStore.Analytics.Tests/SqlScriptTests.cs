@@ -1,6 +1,6 @@
-using DuckStore.Web.Etl;
+using DuckStore.Analytics.Etl;
 
-namespace DuckStore.Tests;
+namespace DuckStore.Analytics.Tests;
 
 // Same cases as the Go splitter tests (internal/sqlsplit/sqlsplit_test.go).
 public sealed class SqlScriptTests
