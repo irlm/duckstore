@@ -9,3 +9,6 @@
 
 # local overrides
 .env
+
+# logs
+*.log
