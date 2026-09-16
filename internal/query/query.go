@@ -96,7 +96,7 @@ func Postgres(ctx context.Context, db Querier, q string, maxRows int, args ...an
 
 // PostgresReadOnly runs a query inside a READ ONLY transaction with a
 // statement timeout, then rolls back. Used for user-typed SQL.
-func PostgresReadOnly(ctx context.Context, pool *pgxpool.Pool, q string, maxRows int, timeout time.Duration) (*Result, error) {
+func PostgresReadOnly(ctx context.Context, pool *pgxpool.Pool, q string, maxRows int, timeout time.Duration, args ...any) (*Result, error) {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func PostgresReadOnly(ctx context.Context, pool *pgxpool.Pool, q string, maxRows
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeout.Milliseconds())); err != nil {
 		return nil, err
 	}
-	return Postgres(ctx, tx, q, maxRows)
+	return Postgres(ctx, tx, q, maxRows, args...)
 }
 
 func (r *Result) add(vals []any, maxRows int) {

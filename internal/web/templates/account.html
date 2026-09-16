@@ -1,0 +1,48 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<h1>{{$c.FirstName}} {{$c.LastName}}</h1>
+<p class="muted">Customer #{{$c.ID}} · {{$c.Segment}} · {{$c.Country}} ({{$c.Region}}) · pays in {{$c.Currency}} · {{.Summary.Email}}</p>
+
+<div class="card">
+  <h3>Shop as someone else</h3>
+  <p class="muted">There is no login in this demo. Pick a random customer, optionally from one country, to see prices in another currency.</p>
+  <form class="inline" method="post" action="/account/switch">
+    <select name="country" aria-label="Country">
+      <option value="">Any country</option>
+      {{range .Countries}}<option value="{{.Code}}">{{.Name}}</option>{{end}}
+    </select>
+    <input type="hidden" name="back" value="/account">
+    <button type="submit">Switch customer</button>
+  </form>
+</div>
+
+<div class="two">
+  <section class="card">
+    <h3>Summary</h3>
+    <table>
+      <tr><th>Customer since</th><td>{{date .Summary.CreatedAt}}</td></tr>
+      <tr><th>Orders</th><td>{{num .Summary.Orders}} {{if .Summary.Orders}}(<a href="/orders">see them</a>){{end}}</td></tr>
+      <tr><th>First order</th><td>{{with .Summary.FirstOrder}}{{date .}}{{else}}none yet{{end}}</td></tr>
+      <tr><th>Account manager</th><td>{{with .Summary.AccountManager}}{{.}}{{else}}none (consumer){{end}}</td></tr>
+    </table>
+    <h3>Addresses</h3>
+    <table>
+      {{range .Addresses}}<tr><td>{{.Kind}}{{if .IsDefault}} (default){{end}}</td><td>{{.Line1}}, {{.City}} {{.PostalCode}}</td></tr>{{end}}
+    </table>
+  </section>
+
+  <section class="card">
+    <h3>Relationships (recursive CTEs)</h3>
+    <p class="note">Each list below comes from a self-referencing table walked with <code>WITH RECURSIVE</code>,
+      the same syntax as a recursive CTE in SQL Server, plus the word RECURSIVE.</p>
+    <h4>Referred by (walking up)</h4>
+    {{if .ReferredBy}}<ol>{{range .ReferredBy}}<li>{{.Name}}</li>{{end}}</ol>{{else}}<p class="muted">Nobody: this customer found the store alone.</p>{{end}}
+    <h4>Referred others (walking down)</h4>
+    {{if .Referrals}}<ul>{{range .Referrals}}<li>level {{.Depth}}: {{num .Count}} customers</li>{{end}}</ul>{{else}}<p class="muted">No referrals yet.</p>{{end}}
+    <h4>Account manager's chain of command</h4>
+    {{if .Managers}}<ol>{{range .Managers}}<li>{{.Name}} <span class="muted">{{.Title}}</span></li>{{end}}</ol>{{else}}<p class="muted">Consumer customers have no account manager. Switch until you get a business or VIP customer.</p>{{end}}
+  </section>
+</div>
+{{end}}
+{{end}}

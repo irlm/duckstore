@@ -1,0 +1,62 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<h1>Your cart</h1>
+{{if .Lines}}
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Product</th><th class="num">Price</th><th class="num">Quantity</th><th class="num">Line total</th><th class="num">In stock</th></tr></thead>
+    <tbody>
+    {{range .Lines}}
+    <tr>
+      <td><a href="/p/{{.ProductID}}">{{.Name}}</a><br><span class="muted">{{.Brand}}</span></td>
+      <td class="num">{{money $c .PriceUSD}}</td>
+      <td class="num">
+        <form class="inline" method="post" action="/cart/update">
+          <input type="hidden" name="product_id" value="{{.ProductID}}">
+          <input type="number" name="quantity" value="{{.Quantity}}" min="0" max="99" style="width: 4.5em" aria-label="Quantity">
+          <button type="submit" class="secondary">Update</button>
+        </form>
+      </td>
+      <td class="num">{{money $c (mulf .PriceUSD .Quantity)}}</td>
+      <td class="num">{{num .Stock}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table></div>
+  <p class="muted">Set a quantity to 0 to remove the line.</p>
+</div>
+
+<div class="two">
+  <section class="card">
+    <h3>Estimate</h3>
+    <table>
+      <tr><th>Subtotal</th><td class="num">{{money $c .SubtotalUSD}}</td></tr>
+      <tr><th>Shipping</th><td class="num">{{money $c .ShippingUSD}}</td></tr>
+      <tr><th>Tax ({{printf "%.0f" (mulf $c.TaxRate 100)}}%)</th><td class="num">{{money $c .TaxUSD}}</td></tr>
+      <tr><th>Total</th><td class="num"><strong>{{money $c .TotalUSD}}</strong></td></tr>
+    </table>
+    <p class="muted">Shipping is free for VIP customers and orders over 50 USD. Promotion discounts are applied at checkout.</p>
+  </section>
+  <section class="card">
+    <h3>Checkout</h3>
+    <form method="post" action="/checkout">
+      <p><label for="method">Payment method</label><br>
+      <select id="method" name="method">
+        <option value="card">Card</option><option value="paypal">PayPal</option><option value="bank_transfer">Bank transfer</option>
+        <option value="gift_card">Gift card</option>{{if eq $c.CountryCode "BR"}}<option value="pix">Pix</option>{{end}}
+      </select></p>
+      <p><label for="promo">Promotion code (optional)</label><br>
+      <input id="promo" name="promo" placeholder="for example FLASH-2026-09"></p>
+      <button type="submit">Place order</button>
+    </form>
+    <p class="note">Checkout is ONE transaction of about 12 statements: lock the cart, lock the stock rows in a fixed order,
+      pick a warehouse for each line, take the stock, insert the order, its lines, the payment and the shipment, empty the cart, COMMIT.
+      If anything fails, nothing is written. The statements appear at the bottom of the next page.</p>
+  </section>
+</div>
+{{else}}
+<p>Your cart is empty. <a href="/">Browse the store</a>.</p>
+{{end}}
+{{end}}
+{{end}}

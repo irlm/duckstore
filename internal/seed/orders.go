@@ -17,7 +17,7 @@ func newOrderStreams() *orderStreams {
 	return &orderStreams{
 		orders: newStream("orders", "id", "customer_id", "shipping_address_id", "promotion_id", "status", "currency_code",
 			"subtotal", "discount", "shipping_fee", "tax", "total", "placed_at", "updated_at"),
-		items:     newStream("order_items", "order_id", "line_no", "product_id", "quantity", "unit_price", "discount"),
+		items:     newStream("order_items", "order_id", "line_no", "product_id", "warehouse_id", "quantity", "unit_price", "discount"),
 		payments:  newStream("payments", "id", "order_id", "method", "status", "amount", "paid_at"),
 		shipments: newStream("shipments", "id", "order_id", "warehouse_id", "carrier", "tracking_number", "status", "shipped_at", "delivered_at"),
 		returns:   newStream("returns", "id", "order_id", "line_no", "quantity", "reason", "status", "refund_amount", "requested_at"),
@@ -37,11 +37,11 @@ var (
 )
 
 type orderLine struct {
-	product    int
-	qty        int64
-	unitCents  int64
-	discCents  int64
-	returned   bool
+	product   int
+	qty       int64
+	unitCents int64
+	discCents int64
+	returned  bool
 }
 
 type orderCounters struct {
@@ -199,12 +199,12 @@ func (g *gen) emitOrder(ctx context.Context, s *orderStreams, n *orderCounters, 
 	var carrier string
 	var shippedAt, deliveredAt time.Time
 	transit := 0
+	whs, crossBorder := g.whByCountry[cd.Code], false
+	if len(whs) == 0 {
+		whs, crossBorder = g.whByRegion[cd.Region], true
+	}
+	whID = whs[g.rng.IntN(len(whs))]
 	if !cancelled {
-		whs, crossBorder := g.whByCountry[cd.Code], false
-		if len(whs) == 0 {
-			whs, crossBorder = g.whByRegion[cd.Region], true
-		}
-		whID = whs[g.rng.IntN(len(whs))]
 		carrier = cd.Carriers[g.weighted([]float64{3, 2, 1}[:len(cd.Carriers)])]
 		shippedAt = paidAt.Add(time.Duration(4*3600+g.rng.IntN(68*3600)) * time.Second)
 		transit = carrierTransitDays[carrier] + g.rng.IntN(3)
@@ -244,7 +244,7 @@ func (g *gen) emitOrder(ctx context.Context, s *orderStreams, n *orderCounters, 
 		return err
 	}
 	for i, l := range lines {
-		if err := s.items.add(ctx, orderID, int16(i+1), int64(l.product+1), int32(l.qty), money(l.unitCents), money(l.discCents)); err != nil {
+		if err := s.items.add(ctx, orderID, int16(i+1), int64(l.product+1), whID, int32(l.qty), money(l.unitCents), money(l.discCents)); err != nil {
 			return err
 		}
 	}
@@ -284,13 +284,16 @@ func (g *gen) emitOrder(ctx context.Context, s *orderStreams, n *orderCounters, 
 		}
 	}
 
-	if status != "shipped" && status != "delivered" {
+	if status == "pending" || status == "cancelled" {
 		return nil
 	}
 
-	// Shipment.
+	// Shipment: created when the order is paid, shipped later.
 	n.shipment++
 	tracking := fmt.Sprintf("%s%010d", strings.ToUpper(slugify(carrier)[:2]), g.rng.Int64N(1e10))
+	if status == "paid" {
+		return s.shipments.add(ctx, n.shipment, orderID, whID, carrier, tracking, "preparing", nil, nil)
+	}
 	if status == "shipped" {
 		return s.shipments.add(ctx, n.shipment, orderID, whID, carrier, tracking, "in_transit", shippedAt, nil)
 	}

@@ -223,13 +223,16 @@ CREATE TABLE orders (
 );
 
 -- Composite primary key (order_id, line_no), like SalesOrderDetail.
+-- warehouse_id: where this line ships from. One order can ship from several
+-- warehouses, with one shipment per warehouse.
 CREATE TABLE order_items (
-    order_id   bigint        NOT NULL,
-    line_no    smallint      NOT NULL,
-    product_id bigint        NOT NULL,
-    quantity   integer       NOT NULL CHECK (quantity > 0),
-    unit_price numeric(12,2) NOT NULL,           -- order currency, before discount
-    discount   numeric(12,2) NOT NULL DEFAULT 0  -- total discount for the line
+    order_id     bigint        NOT NULL,
+    line_no      smallint      NOT NULL,
+    product_id   bigint        NOT NULL,
+    warehouse_id bigint        NOT NULL,
+    quantity     integer       NOT NULL CHECK (quantity > 0),
+    unit_price   numeric(12,2) NOT NULL,           -- order currency, before discount
+    discount     numeric(12,2) NOT NULL DEFAULT 0  -- total discount for the line
 );
 
 CREATE TABLE payments (
@@ -248,8 +251,10 @@ CREATE TABLE shipments (
     carrier         text        NOT NULL,
     tracking_number text        NOT NULL,
     status          text        NOT NULL CHECK (status IN ('preparing', 'in_transit', 'delivered')),
-    shipped_at      timestamptz NOT NULL,
-    delivered_at    timestamptz,
+    shipped_at      timestamptz,             -- NULL while preparing
+    delivered_at    timestamptz,             -- NULL until delivered
+    CHECK ((status = 'preparing') = (shipped_at IS NULL)),
+    CHECK ((status = 'delivered') = (delivered_at IS NOT NULL)),
     CHECK (delivered_at IS NULL OR delivered_at >= shipped_at)
 );
 

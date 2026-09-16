@@ -1,0 +1,39 @@
+{{define "content"}}
+{{with .Data}}
+{{if .Running}}<meta http-equiv="refresh" content="2">{{end}}
+<h1>ETL: Postgres → DuckDB</h1>
+<p class="lead">The ETL attaches Postgres, copies the store tables into <code>raw.*</code>, builds the star schema in <code>dw.*</code>,
+  exports Parquet, and writes all of it into a NEW file. When it is done, the file replaces the old warehouse and this server reopens it.
+  Readers never see a half-built warehouse.</p>
+
+<div class="card">
+  {{if .Running}}
+    <p><strong>Running</strong> since {{datetime .Started}}. This page refreshes every 2 seconds.</p>
+  {{else}}
+    <form method="post" action="/analytics/etl"><button type="submit">Run ETL now</button></form>
+    {{with .Err}}<p class="err">Last run failed: {{.}}</p>{{end}}
+    {{with .Result}}<p class="good">Last run finished in {{dur .Duration}}: {{printf "%.0f" (mb .SizeBytes)}} MB, orders up to #{{num .MaxOrderID}}.</p>{{end}}
+  {{end}}
+  <p class="note">You can also run <code>make etl</code> in a terminal. The server notices the new file within a few seconds.</p>
+</div>
+
+{{if .Steps}}
+<section class="card">
+  <h2>Steps of this run</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Step</th><th class="num">Rows</th><th class="num">Time</th></tr></thead>
+    <tbody>{{range .Steps}}<tr><td>{{.Label}}</td><td class="num">{{num .Rows}}</td><td class="num">{{dur .Duration}}</td></tr>{{end}}</tbody>
+  </table></div>
+</section>
+{{end}}
+
+{{if and (not .Running) .Last}}
+<section class="card">
+  <h2>Build in use</h2>
+  <p class="muted">Built {{cell (index .Info "built_at")}} UTC, orders up to #{{num (index .Info "max_order_id")}}.</p>
+  {{template "resulttable" .Last}}
+</section>
+{{end}}
+{{with .LastErr}}<p class="err">{{.}}</p>{{end}}
+{{end}}
+{{end}}

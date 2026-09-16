@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<section class="hero">
+  <h1>An online store on Postgres, analyzed with DuckDB</h1>
+  <p class="lead">Browse, buy, ship and return: every click is a small Postgres transaction. The
+    <a href="/analytics">analytics side</a> asks big questions about the same data in DuckDB.
+    Every page lists the SQL it ran at the bottom.</p>
+</section>
+
+<h2>Departments</h2>
+<ul class="grid cats">
+  {{range .Categories}}<li><a href="/c/{{.Slug}}"><strong>{{.Name}}</strong><span class="muted">{{num .Products}} products</span></a></li>{{end}}
+</ul>
+
+<div class="two">
+  <section class="card">
+    <h2><span class="badge postgres"><span class="dot"></span>Postgres</span> Best sellers, last 7 days</h2>
+    <p class="note">Aggregated live from <code>orders</code> and <code>order_items</code> on every visit. It stays fast because the
+      index on <code>orders (placed_at)</code> limits it to one week of rows.</p>
+    {{if .BestSellers}}{{template "plist" (plist $c .BestSellers true)}}{{else}}<p class="muted">No orders in the last 7 days.</p>{{end}}
+  </section>
+  <section class="card">
+    <h2><span class="badge duckdb"><span class="dot"></span>DuckDB</span> Popular, last 90 days</h2>
+    <p class="note">The warehouse chooses the products (a 90-day scan it computed during the ETL); Postgres
+      provides their current names and prices. That hybrid pattern keeps heavy work off the OLTP database.</p>
+    {{with .TrendingErr}}<p class="err">{{.}}</p>{{end}}
+    {{if .Trending}}{{template "plist" (plist $c .Trending true)}}{{end}}
+  </section>
+</div>
+{{end}}
+{{end}}

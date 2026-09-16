@@ -1,0 +1,102 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<p class="crumbs"><a href="/">Home</a>{{range .Crumbs}} › <a href="/c/{{.Slug}}">{{.Name}}</a>{{end}}</p>
+<h1>{{.Product.Name}}</h1>
+<p class="muted">{{.Product.Brand}} · SKU {{.Product.SKU}}{{if .Ratings.Reviews}} · <span class="stars">{{stars .Ratings.AvgRating}}</span> {{printf "%.2f" .Ratings.AvgRating}} ({{num .Ratings.Reviews}} reviews){{end}}</p>
+
+<div class="two">
+  <section class="card">
+    {{if .Promo}}
+      <p class="price-big">{{money $c .PromoPrice}} <span class="strike">{{money $c .Product.PriceUSD}}</span></p>
+      <p><strong>{{printf "%.0f" .Promo.DiscountPct}}% off</strong> with code <code>{{.Promo.Code}}</code> ({{.Promo.Name}}), until {{date .Promo.EndsAt}}.</p>
+    {{else}}
+      <p class="price-big">{{money $c .Product.PriceUSD}}</p>
+    {{end}}
+    <p class="muted">Prices shown in {{$c.Currency}} at today's rate ({{printf "%.4f" $c.FX}} per USD).</p>
+    <p>{{.Product.Description}}</p>
+    {{if .Product.IsActive}}
+    <form class="inline" method="post" action="/cart/add">
+      <input type="hidden" name="product_id" value="{{.Product.ID}}">
+      <label for="qty">Quantity</label>
+      <input id="qty" type="number" name="quantity" value="1" min="1" max="99" style="width: 5em">
+      <button type="submit">Add to cart</button>
+    </form>
+    <p class="muted">{{num .TotalStock}} in stock across {{len .Stock}} warehouses.</p>
+    {{else}}
+    <p class="err">This product is discontinued.</p>
+    {{end}}
+
+    <h3>Attributes <span class="muted">(a jsonb column)</span></h3>
+    <div class="table-wrap"><table>
+      {{range $k, $v := .Product.Attributes}}<tr><th>{{$k}}</th><td>{{cell $v}}</td></tr>{{end}}
+    </table></div>
+  </section>
+
+  <section class="card">
+    <h3>Stock by warehouse</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Warehouse</th><th>Location</th><th class="num">On hand</th></tr></thead>
+      <tbody>{{range .Stock}}<tr><td>{{.Code}}</td><td>{{.City}}, {{.Country}}</td><td class="num">{{num .Quantity}}</td></tr>{{end}}</tbody>
+    </table></div>
+
+    {{if .Ratings.Reviews}}
+    <h3>Ratings</h3>
+    {{$r := .Ratings}}
+    <div class="meter"><span>5 stars</span><span class="track"><span class="fill" style="width: {{printf "%.1f" (pctOf $r.R5 $r.Reviews)}}%"></span></span><span class="num">{{num $r.R5}}</span></div>
+    <div class="meter"><span>4 stars</span><span class="track"><span class="fill" style="width: {{printf "%.1f" (pctOf $r.R4 $r.Reviews)}}%"></span></span><span class="num">{{num $r.R4}}</span></div>
+    <div class="meter"><span>3 stars</span><span class="track"><span class="fill" style="width: {{printf "%.1f" (pctOf $r.R3 $r.Reviews)}}%"></span></span><span class="num">{{num $r.R3}}</span></div>
+    <div class="meter"><span>2 stars</span><span class="track"><span class="fill" style="width: {{printf "%.1f" (pctOf $r.R2 $r.Reviews)}}%"></span></span><span class="num">{{num $r.R2}}</span></div>
+    <div class="meter"><span>1 star</span><span class="track"><span class="fill" style="width: {{printf "%.1f" (pctOf $r.R1 $r.Reviews)}}%"></span></span><span class="num">{{num $r.R1}}</span></div>
+    {{end}}
+  </section>
+</div>
+
+<div class="two">
+  <section class="card">
+    <h3>Price history <span class="muted">(temporal table product_prices)</span></h3>
+    {{safe .PriceChart}}
+    <details class="sql-details">
+      <summary>Table view</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Valid from</th><th>Valid to</th><th class="num">Price (USD)</th></tr></thead>
+        <tbody>{{range .Prices}}<tr><td>{{datetime .ValidFrom}}</td><td>{{with .ValidTo}}{{datetime .}}{{else}}current{{end}}</td><td class="num">{{usd .PriceUSD}}</td></tr>{{end}}</tbody>
+      </table></div>
+    </details>
+    <details class="sql-details">
+      <summary>Change the price (creates a new version)</summary>
+      <p class="note">One transaction closes the current row (<code>valid_to = now()</code>), inserts the new version and updates
+        <code>products.price_usd</code>. After the next ETL, <code>dw.dim_product</code> has one more row for this product (SCD Type 2),
+        and old sales keep their old price.</p>
+      <form class="inline" method="post" action="/p/{{.Product.ID}}/price">
+        <label for="price">New price (USD)</label>
+        <input id="price" name="price_usd" type="number" step="0.01" min="0.01" value="{{printf "%.2f" .Product.PriceUSD}}" style="width: 8em">
+        <button type="submit" class="secondary">Change price</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="card">
+    <h3><span class="badge duckdb"><span class="dot"></span>DuckDB</span> Frequently bought together</h3>
+    <p class="note">Finding pairs means joining every order line with every other line of the same order: millions of pairs.
+      The ETL computes it once in DuckDB (<code>dw.product_pairs</code>); this page only reads 8 rows.</p>
+    {{with .TogetherErr}}<p class="err">{{.}}</p>{{end}}
+    {{if .Together}}
+    <ul class="plist">
+      {{range .Together}}<li><a href="/p/{{.ID}}">{{.Name}}</a><span class="price">{{money $c .PriceUSD}}</span><span class="meta">{{.Brand}}</span><span class="side">together in {{num .Units}} orders</span></li>{{end}}
+    </ul>
+    {{else if not .TogetherErr}}<p class="muted">Not enough orders with this product yet.</p>{{end}}
+  </section>
+</div>
+
+<section class="card">
+  <h3>Latest reviews</h3>
+  {{range .Reviews}}
+    <p><span class="stars">{{stars (float .Rating)}}</span> <strong>{{.Title}}</strong><br>
+    {{.Body}} <span class="muted">{{.FirstName}} ({{.Country}}), {{date .CreatedAt}}</span></p>
+  {{else}}
+    <p class="muted">No reviews yet.</p>
+  {{end}}
+</section>
+{{end}}
+{{end}}

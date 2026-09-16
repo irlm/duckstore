@@ -25,9 +25,12 @@ pay AS (
     GROUP BY ALL
 ),
 ship AS (
-    SELECT order_id, warehouse_id, carrier, shipped_at::TIMESTAMP AS shipped_at, delivered_at::TIMESTAMP AS delivered_at
+    -- An order can have several shipments (one per warehouse). Keep the one
+    -- that arrived last: the order is complete when its last parcel arrives.
+    SELECT order_id, warehouse_id, carrier, shipped_at::TIMESTAMP AS shipped_at, delivered_at::TIMESTAMP AS delivered_at,
+           count(*) OVER (PARTITION BY order_id) AS shipment_count
     FROM raw.shipments
-    QUALIFY row_number() OVER (PARTITION BY order_id ORDER BY shipped_at DESC) = 1
+    QUALIFY row_number() OVER (PARTITION BY order_id ORDER BY delivered_at DESC NULLS FIRST, shipped_at DESC NULLS FIRST) = 1
 ),
 ret AS (
     SELECT order_id, count(*) AS returned_lines, sum(refund_amount) AS refund_local
@@ -55,6 +58,7 @@ SELECT
     pay.payment_method,
     pay.failed_payments,
     ship.warehouse_id,
+    ship.shipment_count,
     ship.carrier,
     ship.shipped_at,
     ship.delivered_at,
@@ -91,7 +95,7 @@ SELECT
     dp.product_key,                         -- the product VERSION valid at order time (SCD2)
     oi.product_id,
     fo.promotion_id,
-    fo.warehouse_id,
+    oi.warehouse_id,                        -- where the line shipped from
     fo.status                               AS order_status,
     fo.currency_code,
     fo.fx_rate,

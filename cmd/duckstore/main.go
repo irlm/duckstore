@@ -9,8 +9,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,12 +21,14 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/irlm/duckstore/internal/bench"
 	"github.com/irlm/duckstore/internal/config"
 	"github.com/irlm/duckstore/internal/pg"
 	"github.com/irlm/duckstore/internal/query"
 	"github.com/irlm/duckstore/internal/seed"
 	"github.com/irlm/duckstore/internal/sqlsplit"
 	"github.com/irlm/duckstore/internal/warehouse"
+	"github.com/irlm/duckstore/internal/web"
 )
 
 func main() {
@@ -43,6 +48,10 @@ func main() {
 		err = runETL(ctx, cfg)
 	case "sql":
 		err = runSQL(ctx, cfg, os.Args[2:])
+	case "serve":
+		err = runServe(ctx, cfg)
+	case "bench":
+		err = runBench(ctx, cfg, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -59,7 +68,9 @@ func usage() {
 commands:
   seed    create the Postgres schema and load fake data
   etl     build the DuckDB warehouse from Postgres
-  sql     run SQL on the warehouse (DuckDB) or the store (Postgres)`)
+  sql     run SQL on the warehouse (DuckDB) or the store (Postgres)
+  serve   run the web app: store (Postgres) + analytics (DuckDB)
+  bench   run the Postgres vs DuckDB comparisons in the terminal`)
 }
 
 func runSeed(ctx context.Context, cfg config.Config, args []string) error {
@@ -79,7 +90,7 @@ func runSeed(ctx context.Context, cfg config.Config, args []string) error {
 		end = t
 	}
 
-	pool, err := pg.Connect(ctx, cfg.PostgresURL)
+	pool, err := pg.Connect(ctx, cfg.PostgresURL, nil)
 	if err != nil {
 		return err
 	}
@@ -152,7 +163,7 @@ func runSQL(ctx context.Context, cfg config.Config, args []string) error {
 			return res, err
 		}
 	case query.EnginePostgres:
-		pool, err := pg.Connect(ctx, cfg.PostgresURL)
+		pool, err := pg.Connect(ctx, cfg.PostgresURL, nil)
 		if err != nil {
 			return err
 		}
@@ -195,4 +206,84 @@ func printResult(r *query.Result) {
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
+}
+
+func runServe(ctx context.Context, cfg config.Config) error {
+	pool, err := pg.Connect(ctx, cfg.PostgresURL, web.Tracer())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	wh := warehouse.New(cfg)
+	if err := wh.Reload(ctx); err != nil {
+		return err
+	}
+	defer wh.Close()
+	go wh.Watch(ctx, 3*time.Second)
+
+	srv, err := web.New(cfg, pool, wh)
+	if err != nil {
+		return err
+	}
+	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpSrv.Shutdown(shutdown)
+	}()
+	log.Printf("duckstore: store http://%s/  analytics http://%s/analytics", cfg.Listen, cfg.Listen)
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+func runBench(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	only := fs.String("only", "", "run one scenario id (default: all)")
+	fs.Parse(args)
+
+	pool, err := pg.Connect(ctx, cfg.PostgresURL, nil)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	wh := warehouse.New(cfg)
+	if err := wh.Reload(ctx); err != nil {
+		return err
+	}
+	defer wh.Close()
+	env := bench.Env{PG: pool, WH: wh, DataDir: cfg.DataDir}
+
+	for _, sc := range bench.Scenarios() {
+		if *only != "" && sc.ID != *only {
+			continue
+		}
+		fmt.Printf("\n▶ %s\n  %s\n", sc.Title, sc.ID)
+		res, err := bench.Run(ctx, env, sc)
+		if err != nil {
+			return err
+		}
+		best := res.Fastest()
+		for i, m := range res.Measurements {
+			line := fmt.Sprintf("  %-28s %12s", m.Variant.Name(), m.Median.Round(10*time.Microsecond))
+			switch {
+			case m.Err != "":
+				line = fmt.Sprintf("  %-28s error: %s", m.Variant.Name(), m.Err)
+			case sc.Kind == bench.KindWrite:
+				line += fmt.Sprintf("  %8.0f ops/s", float64(m.Ops)/m.Median.Seconds())
+				if m.Errors > 0 {
+					line += fmt.Sprintf("  %d failed (conflicts)", m.Errors)
+				}
+			case i != best && best >= 0:
+				line += fmt.Sprintf("  %6.1fx slower", m.Median.Seconds()/res.Measurements[best].Median.Seconds())
+			case i == best:
+				line += "  fastest"
+			}
+			fmt.Println(line)
+		}
+	}
+	return nil
 }

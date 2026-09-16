@@ -1,0 +1,7 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<div class="card">
+  <p class="err">{{.Data}}</p>
+  <p class="muted">Is Postgres running (<code>make up</code>)? Was the data loaded (<code>make seed</code>) and the warehouse built (<code>make etl</code>)?</p>
+</div>
+{{end}}

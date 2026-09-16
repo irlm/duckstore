@@ -1,0 +1,46 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<p class="crumbs"><a href="/">Home</a>{{range .Crumbs}} › <a href="/c/{{.Slug}}">{{.Name}}</a>{{end}}</p>
+<h1>{{(index .Crumbs (sub (len .Crumbs) 1)).Name}}</h1>
+{{if .Children}}
+<ul class="grid cats">
+  {{range .Children}}<li><a href="/c/{{.Slug}}"><strong>{{.Name}}</strong></a></li>{{end}}
+</ul>
+{{end}}
+
+{{$slug := (index .Crumbs (sub (len .Crumbs) 1)).Slug}}
+<form class="inline console-bar" method="get">
+  <label for="sort">Sort by</label>
+  <select id="sort" name="sort" onchange="this.form.submit()">
+    <option value="name" {{if eq .Sort "name"}}selected{{end}}>Name</option>
+    <option value="price" {{if eq .Sort "price"}}selected{{end}}>Price: low to high</option>
+    <option value="price_desc" {{if eq .Sort "price_desc"}}selected{{end}}>Price: high to low</option>
+    <option value="newest" {{if eq .Sort "newest"}}selected{{end}}>Newest</option>
+  </select>
+  <noscript><button type="submit">Sort</button></noscript>
+  <span class="muted">{{num .Total}} products, including all subcategories</span>
+</form>
+
+<ul class="products">
+  {{range .Products}}
+  <li>
+    <a href="/p/{{.ID}}"><strong>{{.Name}}</strong></a>
+    <span class="muted">{{.Brand}}</span>
+    {{if .Reviews}}<span class="stars" title="{{printf "%.1f" .Rating}} of 5">{{stars .Rating}} <span class="muted">({{num .Reviews}})</span></span>{{end}}
+    <span class="price">{{money $c .PriceUSD}}</span>
+  </li>
+  {{end}}
+</ul>
+
+{{if gt .Pages 1}}
+<nav class="pager" aria-label="Pages">
+  {{if gt .Page 1}}<a href="/c/{{$slug}}?sort={{.Sort}}&amp;page={{sub .Page 1}}">← Previous</a>{{end}}
+  <span class="muted">Page {{.Page}} of {{.Pages}}</span>
+  {{if lt .Page .Pages}}<a href="/c/{{$slug}}?sort={{.Sort}}&amp;page={{add .Page 1}}">Next →</a>{{end}}
+</nav>
+<p class="note">Paging uses <code>LIMIT 24 OFFSET n</code>. Deep pages get slower because Postgres still produces the skipped rows;
+  large apps switch to keyset paging (<code>WHERE (price, id) &gt; (last_price, last_id)</code>).</p>
+{{end}}
+{{end}}
+{{end}}

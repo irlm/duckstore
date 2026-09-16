@@ -1,0 +1,43 @@
+{{define "content"}}
+{{with .Data}}
+<h1>SQL console</h1>
+<p class="muted">DuckDB sees the warehouse (<code>dw.*</code>, <code>raw.*</code>), the Parquet files in <code>data/parquet</code> and the live store as <code>pg.store.*</code>.
+  Postgres runs in a read-only transaction. Press Ctrl+Enter to run.</p>
+
+<form class="inline console-bar" method="get" action="/analytics/sql">
+  <label for="lesson">Lesson</label>
+  <select id="lesson" name="lesson">
+    {{$cur := .Lesson}}
+    {{range .Lessons}}<option value="{{.Name}}" {{if eq .Name $cur}}selected{{end}}>{{.Title}}</option>{{end}}
+  </select>
+  <button type="submit" class="secondary">Load</button>
+</form>
+
+<form method="post" action="/analytics/sql">
+  <div class="console-bar">
+    <label><input type="radio" name="engine" value="duckdb" {{if eq .Engine "duckdb"}}checked{{end}}> <span class="badge duckdb"><span class="dot"></span>DuckDB</span></label>
+    <label><input type="radio" name="engine" value="postgres" {{if eq .Engine "postgres"}}checked{{end}}> <span class="badge postgres"><span class="dot"></span>Postgres</span></label>
+    <label><input type="checkbox" name="explain" {{if .Explain}}checked{{end}}> EXPLAIN ANALYZE each statement</label>
+  </div>
+  <textarea name="sql" rows="18" spellcheck="false" aria-label="SQL">{{.SQL}}</textarea>
+  <div class="console-bar"><button type="submit">Run</button>{{if .Results}}<span class="muted">{{len .Results}} statements in {{dur .Total}}</span>{{end}}</div>
+</form>
+
+{{range .Results}}
+<section class="card result">
+  <pre><code>{{.SQL}}</code></pre>
+  {{if .Err}}
+    <p class="err">{{.Err}}</p>
+  {{else if .Plan}}
+    <p class="muted">{{dur .Result.Duration}}</p>
+    <pre class="plan">{{.Plan}}</pre>
+  {{else if .Result.Columns}}
+    <p class="muted">{{num .Result.RowCount}} rows in {{dur .Result.Duration}}</p>
+    {{template "resulttable" .Result}}
+  {{else}}
+    <p class="muted">OK in {{dur .Result.Duration}}</p>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+{{end}}

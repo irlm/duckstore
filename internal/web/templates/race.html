@@ -1,0 +1,61 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Engine race</h1>
+<p class="lead">The same question on Postgres and on DuckDB, timed on this machine. Nothing here is a prediction:
+  press <em>Run</em> and look at the numbers.</p>
+<div class="card">
+  <div class="legend">
+    <span><span class="dot s1"></span>Postgres, store tables (normalized)</span>
+    <span><span class="dot s2"></span>DuckDB, the same tables copied by the ETL (<code>raw.*</code>)</span>
+    <span><span class="dot s3"></span>DuckDB, star schema (<code>dw.*</code>)</span>
+  </div>
+  <p class="note">Blue vs orange isolates the <strong>engine</strong> (row store vs column store, same tables, similar SQL).
+    Orange vs aqua isolates the <strong>data model</strong> (joins and currency conversion already done by the ETL).
+    Each read runs once to warm caches, then 5 times (or once if it takes more than 2 s); the median is shown.
+    Postgres runs with parallel query enabled.</p>
+  {{with .Running}}<p class="flash">Running now: {{.}}. Refresh in a moment.</p>{{end}}
+</div>
+
+{{range .Groups}}
+<h2>{{.Title}}</h2>
+<p class="muted">{{.Intro}}</p>
+{{range .Rows}}
+<section class="card" id="{{.Scenario.ID}}">
+  <div class="race-head">
+    <div>
+      <h3 style="margin-top: 0">{{.Scenario.Title}}</h3>
+      <p class="muted">{{.Scenario.Question}}</p>
+    </div>
+    <form method="post" action="/analytics/race/{{.Scenario.ID}}">
+      <button type="submit" {{if $.Data.Running}}disabled{{end}}>{{if .Result}}Run again{{else}}Run{{end}}</button>
+    </form>
+  </div>
+  {{if .Result}}
+    {{.Chart}}
+    {{with .Summary}}<p class="summary">{{.}}</p>{{end}}
+    <p class="muted">Measured {{datetime .Result.At}}{{with .Result.Args}} with parameters {{range .}}{{cell .}} {{end}}{{end}}.</p>
+  {{end}}
+  <p class="note">{{.Scenario.Why}}</p>
+  <details class="sql-details">
+    <summary>SQL of each variant{{if .Result}}, runs and sample rows{{end}}</summary>
+    {{$res := .Result}}
+    <div class="variant-sql">
+      {{range $i, $v := .Scenario.Variants}}
+      <div>
+        <h4><span class="dot {{slotClass $v.Key}}"></span>{{$v.Name}}</h4>
+        <pre><code>{{$v.SQL}}</code></pre>
+        {{if $res}}{{with index $res.Measurements $i}}
+          {{if .Err}}<p class="err">{{.Err}}</p>{{else}}
+          <p class="muted">runs: {{range .Runs}}{{dur .}} {{end}}{{if .Ops}} · {{num .Ops}} succeeded{{end}}{{if .Errors}} · <span class="err">{{num .Errors}} failed with a conflict</span>{{end}}</p>
+          {{with .Sample}}{{if .Columns}}{{template "resulttable" .}}{{end}}{{end}}
+          {{end}}
+        {{end}}{{end}}
+      </div>
+      {{end}}
+    </div>
+  </details>
+</section>
+{{end}}
+{{end}}
+{{end}}
+{{end}}

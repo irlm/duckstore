@@ -1,0 +1,23 @@
+{{define "content"}}
+<h1>Your orders</h1>
+{{with .Data}}
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Order</th><th>Placed</th><th>Status</th><th class="num">Lines</th><th class="num">Total</th></tr></thead>
+    <tbody>
+    {{range .}}
+    <tr>
+      <td><a href="/orders/{{.ID}}">#{{.ID}}</a></td>
+      <td>{{datetime .PlacedAt}}</td>
+      <td><span class="status {{.Status}}">{{.Status}}</span></td>
+      <td class="num">{{.Lines}}</td>
+      <td class="num">{{.Symbol}}{{dec2 .Total}} <span class="muted">{{.Currency}}</span></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table></div>
+</div>
+{{else}}
+<p>No orders yet. <a href="/">Start shopping</a> or <a href="/account">switch to another customer</a>.</p>
+{{end}}
+{{end}}

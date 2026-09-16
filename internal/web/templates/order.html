@@ -1,0 +1,83 @@
+{{define "content"}}
+{{with .Data}}
+{{$o := .Order}}
+<p class="crumbs"><a href="/orders">Your orders</a> › #{{$o.ID}}</p>
+<h1>Order #{{$o.ID}} <span class="status {{$o.Status}}">{{$o.Status}}</span></h1>
+<p class="muted">Placed {{datetime $o.PlacedAt}} by {{$o.Customer}} · last update {{datetime $o.UpdatedAt}}{{with $o.PromoCode}} · promotion <code>{{.}}</code>{{end}}</p>
+
+<div class="card">
+  <h3>Move the order along</h3>
+  <p class="muted">These buttons play the warehouse and the carrier. Each one is a short transaction that locks the order row first.</p>
+  <div class="console-bar">
+    {{if eq $o.Status "paid"}}<form method="post" action="/orders/{{$o.ID}}/ship"><button type="submit">Ship</button></form>{{end}}
+    {{if eq $o.Status "shipped"}}<form method="post" action="/orders/{{$o.ID}}/deliver"><button type="submit">Mark delivered</button></form>{{end}}
+    {{if or (eq $o.Status "paid") (eq $o.Status "pending")}}<form method="post" action="/orders/{{$o.ID}}/cancel"><button type="submit" class="secondary">Cancel order</button></form>{{end}}
+    {{if eq $o.Status "delivered"}}<span class="muted">Delivered. You can return single units below.</span>{{end}}
+    {{if eq $o.Status "cancelled"}}<span class="muted">Cancelled: stock went back to the warehouse and the payment was refunded.</span>{{end}}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Product</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Discount</th><th class="num">Returned</th>{{if eq $o.Status "delivered"}}<th>Return</th>{{end}}</tr></thead>
+    <tbody>
+    {{range .Lines}}
+    <tr>
+      <td>{{.LineNo}}</td>
+      <td><a href="/p/{{.ProductID}}">{{.Name}}</a></td>
+      <td class="num">{{.Quantity}}</td>
+      <td class="num">{{$o.Symbol}}{{dec2 .UnitPrice}}</td>
+      <td class="num">{{$o.Symbol}}{{dec2 .Discount}}</td>
+      <td class="num">{{.Returned}}</td>
+      {{if eq $o.Status "delivered"}}
+      <td>
+        {{if lt .Returned (int64 .Quantity)}}
+        <form class="inline" method="post" action="/orders/{{$o.ID}}/return">
+          <input type="hidden" name="line_no" value="{{.LineNo}}">
+          <select name="reason" aria-label="Reason">
+            <option value="changed_mind">Changed mind</option><option value="damaged">Damaged</option>
+            <option value="wrong_size">Wrong size</option><option value="not_as_described">Not as described</option>
+          </select>
+          <button type="submit" class="secondary">Return 1</button>
+        </form>
+        {{end}}
+      </td>
+      {{end}}
+    </tr>
+    {{end}}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="two">
+  <section class="card">
+    <h3>Totals ({{$o.Currency}})</h3>
+    <table>
+      <tr><th>Subtotal</th><td class="num">{{$o.Symbol}}{{dec2 $o.Subtotal}}</td></tr>
+      <tr><th>Discount</th><td class="num">−{{$o.Symbol}}{{dec2 $o.Discount}}</td></tr>
+      <tr><th>Shipping</th><td class="num">{{$o.Symbol}}{{dec2 $o.ShippingFee}}</td></tr>
+      <tr><th>Tax</th><td class="num">{{$o.Symbol}}{{dec2 $o.Tax}}</td></tr>
+      <tr><th>Total</th><td class="num"><strong>{{$o.Symbol}}{{dec2 $o.Total}}</strong></td></tr>
+    </table>
+    <p class="muted">Ship to: {{$o.Line1}}, {{$o.City}} {{$o.PostalCode}}, {{$o.Country}}</p>
+  </section>
+  <section class="card">
+    <h3>Payments</h3>
+    <table>
+      {{range .Payments}}<tr><td>{{.Method}}</td><td><span class="status {{.Status}}">{{.Status}}</span></td><td class="num">{{$o.Symbol}}{{dec2 .Amount}}</td><td>{{datetime .PaidAt}}</td></tr>{{else}}<tr><td class="muted">None</td></tr>{{end}}
+    </table>
+    <h3>Shipments <span class="muted">(one per warehouse)</span></h3>
+    {{range .Shipments}}
+      <p><span class="status {{.Status}}">{{.Status}}</span> {{.Carrier}} <code>{{.Tracking}}</code> from {{.Warehouse}}<br>
+      <span class="muted">shipped: {{with .ShippedAt}}{{datetime .}}{{else}}not yet{{end}} · delivered: {{with .DeliveredAt}}{{datetime .}}{{else}}not yet{{end}}</span></p>
+    {{else}}<p class="muted">No shipment.</p>{{end}}
+    {{if .Returns}}
+    <h3>Returns</h3>
+    <table>
+      {{range .Returns}}<tr><td>line {{.LineNo}}</td><td>{{.Quantity}} × {{.Reason}}</td><td><span class="status {{.Status}}">{{.Status}}</span></td><td class="num">{{$o.Symbol}}{{dec2 .Refund}}</td></tr>{{end}}
+    </table>
+    {{end}}
+  </section>
+</div>
+{{end}}
+{{end}}

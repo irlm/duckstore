@@ -77,6 +77,7 @@ ALTER TABLE orders             ADD FOREIGN KEY (promotion_id)            REFEREN
 ALTER TABLE orders             ADD FOREIGN KEY (currency_code)           REFERENCES currencies (code);
 ALTER TABLE order_items        ADD FOREIGN KEY (order_id)                REFERENCES orders (id);
 ALTER TABLE order_items        ADD FOREIGN KEY (product_id)              REFERENCES products (id);
+ALTER TABLE order_items        ADD FOREIGN KEY (warehouse_id)            REFERENCES warehouses (id);
 ALTER TABLE payments           ADD FOREIGN KEY (order_id)                REFERENCES orders (id);
 ALTER TABLE shipments          ADD FOREIGN KEY (order_id)                REFERENCES orders (id);
 ALTER TABLE shipments          ADD FOREIGN KEY (warehouse_id)            REFERENCES warehouses (id);

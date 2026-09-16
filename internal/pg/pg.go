@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -13,8 +14,8 @@ import (
 var schemaFS embed.FS
 
 // Connect opens a connection pool with search_path=store, so queries can say
-// "orders" instead of "store.orders".
-func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
+// "orders" instead of "store.orders". tracer (optional) sees every query.
+func Connect(ctx context.Context, url string, tracer pgx.QueryTracer) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres url: %w", err)
@@ -22,6 +23,7 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg.ConnConfig.RuntimeParams["search_path"] = "store"
 	cfg.ConnConfig.RuntimeParams["application_name"] = "duckstore"
 	cfg.MaxConns = 32
+	cfg.ConnConfig.Tracer = tracer
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

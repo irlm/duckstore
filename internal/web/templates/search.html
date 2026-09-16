@@ -1,0 +1,21 @@
+{{define "content"}}
+{{$c := .Customer}}
+{{with .Data}}
+<h1>Search</h1>
+<form class="inline console-bar" action="/search" role="search">
+  <input type="search" name="q" value="{{.Q}}" placeholder="for example: yoga, laptop, nordvik" aria-label="Search products" style="min-width: 260px">
+  <button type="submit">Search</button>
+</form>
+{{if .Q}}
+  <p class="muted">{{len .Products}} results for “{{.Q}}”, ordered by trigram similarity.</p>
+  <ul class="products">
+    {{range .Products}}
+    <li><a href="/p/{{.ID}}"><strong>{{.Name}}</strong></a><span class="muted">{{.Brand}}</span><span class="price">{{money $c .PriceUSD}}</span></li>
+    {{end}}
+  </ul>
+  <p class="note"><code>ILIKE '%word%'</code> cannot use a normal B-tree index (the pattern does not start at the beginning).
+    The <code>pg_trgm</code> GIN index splits names into 3-letter pieces so Postgres can still find matches without reading every product.
+    SQL Server would need a full-text index for this.</p>
+{{end}}
+{{end}}
+{{end}}

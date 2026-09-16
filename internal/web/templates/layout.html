@@ -1,0 +1,95 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · duckstore</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦆</text></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="/">duckstore</a>
+    <nav class="sections" aria-label="Sections">
+      <a href="/" {{if eq .Section "store"}}class="active" aria-current="page"{{end}}><span class="dot s1"></span>Store <small>Postgres · OLTP</small></a>
+      <a href="/analytics" {{if eq .Section "analytics"}}class="active" aria-current="page"{{end}}><span class="dot s2"></span>Analytics <small>DuckDB · OLAP</small></a>
+    </nav>
+  </div>
+  <nav class="wrap subnav" aria-label="Pages">
+    {{if eq .Section "store"}}
+      <form action="/search" class="search" role="search"><input type="search" name="q" placeholder="Search products" aria-label="Search products"></form>
+      <span class="spacer"></span>
+      {{with .Customer}}
+        <a href="/cart">Cart ({{.CartUnits}})</a>
+        <a href="/orders">Orders</a>
+        <a href="/account" title="Switch customer on the account page">{{.FirstName}} {{.LastName}} · {{.CountryCode}} · {{.Currency}}</a>
+      {{end}}
+    {{else}}
+      <a href="/analytics">Dashboard</a>
+      <a href="/analytics/race">Engine race</a>
+      <a href="/analytics/sql">SQL console</a>
+      <a href="/analytics/etl">ETL</a>
+    {{end}}
+  </nav>
+</header>
+<main class="wrap">
+  {{with .Flash}}<p class="flash" role="status">{{.}}</p>{{end}}
+  {{template "content" .}}
+</main>
+<section class="queries wrap" aria-labelledby="queries-title">
+  <h2 id="queries-title">SQL behind this page</h2>
+  {{if .PrevQueries}}
+    <h3>Your last action: {{.PrevAction}}</h3>
+    <p class="muted">{{countEngine .PrevQueries "postgres"}} Postgres statements in {{dur (sumDur .PrevQueries "postgres")}}.</p>
+    {{range .PrevQueries}}{{template "query" .}}{{end}}
+    <h3>This page</h3>
+  {{end}}
+  <p class="muted">
+    <span class="badge postgres"><span class="dot"></span>Postgres</span> {{countEngine .Queries "postgres"}} queries, {{dur (sumDur .Queries "postgres")}}
+    &nbsp; <span class="badge duckdb"><span class="dot"></span>DuckDB</span> {{countEngine .Queries "duckdb"}} queries, {{dur (sumDur .Queries "duckdb")}}
+  </p>
+  {{range .Queries}}{{template "query" .}}{{end}}
+</section>
+</body>
+</html>{{end}}
+
+{{define "query"}}
+<details class="q">
+  <summary>
+    <span class="badge {{.Engine}}"><span class="dot"></span>{{engine .Engine}}</span>
+    <span class="q-title">{{if .Title}}{{.Title}}{{else}}{{printf "%.90s" .SQL}}{{end}}</span>
+    <span class="q-meta">{{dur .Duration}} · {{plural .Rows "row"}}</span>
+    {{if .Err}}<span class="err">error</span>{{end}}
+  </summary>
+  <pre><code>{{.SQL}}</code></pre>
+  {{with .Args}}<p class="args">{{.}}</p>{{end}}
+  {{with .Err}}<p class="err args">{{.}}</p>{{end}}
+</details>
+{{end}}
+
+{{define "plist"}}
+<ul class="plist">
+  {{range .Items}}
+  <li>
+    <a href="/p/{{.ID}}">{{.Name}}</a>
+    <span class="price">{{money $.Customer .PriceUSD}}</span>
+    <span class="meta">{{.Brand}}</span>
+    {{if $.ShowUnits}}<span class="side">{{num .Units}} sold</span>{{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}
+
+{{define "resulttable"}}
+<div class="table-wrap">
+  <table>
+    <thead><tr>{{$rows := .Rows}}{{range $i, $c := .Columns}}<th {{if and $rows (isNum (index (index $rows 0) $i))}}class="num"{{end}}>{{$c}}</th>{{end}}</tr></thead>
+    <tbody>
+    {{range .Rows}}<tr>{{range .}}<td {{if isNum .}}class="num"{{end}}>{{cell .}}</td>{{end}}</tr>{{end}}
+    </tbody>
+  </table>
+</div>
+{{if .Truncated}}<p class="muted">Showing {{len .Rows}} of {{num .RowCount}} rows.</p>{{end}}
+{{end}}

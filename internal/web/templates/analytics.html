@@ -1,0 +1,60 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Analytics</h1>
+<p class="lead">Every number here comes from the DuckDB warehouse: a star schema built from Postgres by the ETL.
+  {{len .Widgets}} widgets ran in parallel and the whole page took {{dur .Elapsed}}.</p>
+
+<div class="card">
+  <div class="widget-head">
+    <h2 style="margin: 0">Data freshness</h2>
+    <form method="post" action="/analytics/etl"><button type="submit" class="secondary">Run ETL now</button></form>
+  </div>
+  <p>Warehouse built <strong>{{cell (index .Info "built_at")}} UTC</strong> in {{printf "%.1f" (flt (index .Info "build_seconds"))}} s,
+    with orders up to #{{num (index .Info "max_order_id")}} (last one placed {{cell (index .Info "data_until")}}).</p>
+  {{if .LiveErr}}
+    <p class="err">Live check failed: {{.LiveErr}}</p>
+  {{else}}
+    <p><span class="badge duckdb"><span class="dot"></span>DuckDB → Postgres</span>
+      Orders placed since then, which exist only in Postgres so far: <strong>{{num (index .Live "orders")}}</strong>.
+      This number was read live: DuckDB queried the store through <code>ATTACH ... (TYPE postgres)</code>.</p>
+  {{end}}
+  <p class="note">Batch ETL means the warehouse is always a little behind. That is the price of keeping analytics off the OLTP database.
+    For "today so far" numbers you can combine the warehouse with a live query like the one above.</p>
+</div>
+
+{{if .KPIs}}
+<h2>Last 30 days vs the previous 30</h2>
+<div class="kpis">
+  {{range .KPIs}}
+  <div class="kpi">
+    <div class="label">{{.Label}}</div>
+    <div class="value">{{.Value}}</div>
+    {{if .HasDelta}}<div class="delta {{if .Good}}good{{else}}bad{{end}}">{{if .Up}}▲{{else}}▼{{end}} {{.Delta}} vs previous 30 days</div>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{range .Widgets}}
+<section class="card" id="{{.ID}}">
+  <div class="widget-head">
+    <h2 style="margin: 0">{{.Title}}</h2>
+    {{with .Result}}<span class="timing"><span class="badge duckdb"><span class="dot"></span>DuckDB</span> {{dur .Duration}} · {{num .RowCount}} rows</span>{{end}}
+  </div>
+  <p class="muted">{{.Question}}</p>
+  {{if .Err}}
+    <p class="err">{{.Err}}</p>
+  {{else if .Chart}}
+    {{.Chart}}
+    <details class="sql-details"><summary>Table view</summary>{{template "resulttable" .Result}}</details>
+  {{else}}
+    {{template "resulttable" .Result}}
+  {{end}}
+  <details class="sql-details">
+    <summary>SQL · {{.Lesson}}</summary>
+    <pre><code>{{.SQL}}</code></pre>
+  </details>
+</section>
+{{end}}
+{{end}}
+{{end}}

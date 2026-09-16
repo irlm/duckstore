@@ -53,12 +53,12 @@ type fxRow struct {
 }
 
 type employee struct {
-	id, managerID         int64
-	first, last           string
-	title, dept, region   string
-	warehouseID           int64
-	hiredAt               time.Time
-	salaryCents           int64
+	id, managerID       int64
+	first, last         string
+	title, dept, region string
+	warehouseID         int64
+	hiredAt             time.Time
+	salaryCents         int64
 }
 
 type supplier struct {
