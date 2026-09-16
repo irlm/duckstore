@@ -1,0 +1,34 @@
+@* A stacked bar of where the time went. Widths are relative to ScaleMs, so the
+   bars of the two approaches of one question can be compared by length. *@
+<div class="timing-bar" role="img" aria-label="@AriaLabel">
+    @foreach (var phase in Phases.Where(p => p.Ms > 0))
+    {
+        <div class="timing-seg" title="@($"{phase.Name}: {Format.Ms(phase.Ms)}")"
+             style="width: @Width(phase.Ms); background: @Color(phase.Kind)"></div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TimingPhase> Phases { get; set; } = [];
+    [Parameter, EditorRequired] public double ScaleMs { get; set; }
+    [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
+
+    // Validated palette for the three phase kinds (light / dark steps). Blue and
+    // orange are left out on purpose: in this app they mean Postgres and DuckDB.
+    public static string ColorFor(PhaseKind kind, bool dark) => (kind, dark) switch
+    {
+        (PhaseKind.Database, false) => "#1baf7a",
+        (PhaseKind.Database, true) => "#199e70",
+        (PhaseKind.Transfer, false) => "#4a3aa7",
+        (PhaseKind.Transfer, true) => "#9085e9",
+        (_, false) => "#e87ba4",
+        (_, true) => "#d55181",
+    };
+
+    private string Color(PhaseKind kind) => ColorFor(kind, IsDarkMode);
+
+    private string Width(double ms) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"max(2px, {Math.Max(0, ms / Math.Max(ScaleMs, 0.001) * 100):0.###}%)");
+
+    private string AriaLabel => string.Join(", ", Phases.Select(p => $"{p.Name} {Format.Ms(p.Ms)}"));
+}

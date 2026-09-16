@@ -25,6 +25,9 @@
             <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Insights">
                 Reports <MudText Typo="Typo.caption" Inline Class="ml-1" Style="opacity: .7">DuckDB</MudText>
             </MudNavLink>
+            <MudNavLink Href="/compare" Icon="@Icons.Material.Filled.CompareArrows">
+                Compare <MudText Typo="Typo.caption" Inline Class="ml-1" Style="opacity: .7">Postgres vs DuckDB</MudText>
+            </MudNavLink>
             <MudNavLink Href="/etl" Icon="@Icons.Material.Filled.SyncAlt">
                 ETL <MudText Typo="Typo.caption" Inline Class="ml-1" Style="opacity: .7">Postgres → DuckDB</MudText>
             </MudNavLink>
@@ -35,7 +38,9 @@
 
     <MudMainContent>
         <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-            @Body
+            <CascadingValue Value="_isDark" Name="IsDarkMode">
+                @Body
+            </CascadingValue>
         </MudContainer>
     </MudMainContent>
 </MudLayout>

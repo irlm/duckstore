@@ -1,0 +1,83 @@
+@* One way of answering a question: total time, the phase breakdown, the SQL and the rows. *@
+<div class="approach">
+    <MudStack Row AlignItems="AlignItems.Baseline" Wrap="Wrap.Wrap" Spacing="2">
+        <MudText Typo="Typo.subtitle1" Style="font-weight: 600">@Title</MudText>
+        <MudText Typo="Typo.caption" Style="opacity: .75">@Path</MudText>
+    </MudStack>
+
+    @if (Running)
+    {
+        <MudProgressLinear Indeterminate Color="Color.Default" Class="my-4" />
+    }
+    else if (Run is null)
+    {
+        <MudText Typo="Typo.body2" Class="my-3" Style="opacity: .6">Not run yet.</MudText>
+    }
+    else if (Run.Error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense Class="my-2">@Run.Error</MudAlert>
+    }
+    else
+    {
+        <MudStack Row AlignItems="AlignItems.Baseline" Spacing="3" Class="mt-1">
+            <MudText Typo="Typo.h5" Style="font-weight: 600">@Format.Ms(Run.TotalMs)</MudText>
+            <MudText Typo="Typo.body2" Style="opacity: .75">
+                @Run.Result!.RowCount.ToString("N0") rows@(Run.PayloadBytes is long b ? $" · {Format.Bytes(b)} of JSON" : "")
+            </MudText>
+        </MudStack>
+        <TimingBar Phases="Run.Phases" ScaleMs="ScaleMs" />
+        <table class="phase-table">
+            @foreach (var phase in Run.Phases)
+            {
+                <tr>
+                    <td><span class="swatch" style="background: @TimingBar.ColorFor(phase.Kind, IsDarkMode)"></span>@phase.Name</td>
+                    <td class="num">@Format.Ms(phase.Ms)</td>
+                </tr>
+            }
+        </table>
+    }
+
+    <MudStack Row Spacing="1" Class="mt-1">
+        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Code" OnClick="() => _showSql = !_showSql">
+            @(_showSql ? "Hide SQL" : "SQL")
+        </MudButton>
+        @if (Run?.Result is { RowCount: > 0 })
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.TableRows" OnClick="() => _showRows = !_showRows">
+                @(_showRows ? "Hide rows" : "Rows")
+            </MudButton>
+        }
+    </MudStack>
+    <MudCollapse Expanded="_showSql"><pre class="sql">@Sql</pre></MudCollapse>
+    @if (_showRows && Run?.Result is { } result)
+    {
+        <div class="rows-preview">
+            <MudSimpleTable Dense Elevation="0">
+                <thead><tr>@foreach (var c in result.Columns) { <th>@c</th> }</tr></thead>
+                <tbody>
+                    @foreach (var row in result.Rows.Take(25))
+                    {
+                        <tr>@foreach (var cell in row) { <td class="@(Format.IsNumber(cell) ? "num" : "")">@Format.Cell(cell)</td> }</tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+            @if (result.RowCount > 25)
+            {
+                <MudText Typo="Typo.caption">First 25 of @result.RowCount.ToString("N0") rows.</MudText>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public string Path { get; set; } = "";
+    [Parameter] public ApproachRun? Run { get; set; }
+    [Parameter] public bool Running { get; set; }
+    [Parameter] public string? Sql { get; set; }
+    [Parameter] public double ScaleMs { get; set; }
+    [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
+
+    private bool _showSql;
+    private bool _showRows;
+}

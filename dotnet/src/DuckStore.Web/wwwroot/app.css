@@ -44,3 +44,44 @@ pre.sql {
 .nowrap {
     white-space: nowrap;
 }
+
+.timing-bar {
+    display: flex;
+    gap: 2px;
+    height: 18px;
+    margin: 10px 0 6px;
+}
+
+.timing-seg {
+    height: 100%;
+    border-radius: 2px;
+}
+
+.timing-seg:last-child {
+    border-radius: 2px 4px 4px 2px;
+}
+
+.phase-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.phase-table td {
+    padding: 2px 0;
+}
+
+.swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 8px;
+    vertical-align: baseline;
+}
+
+.rows-preview {
+    max-height: 420px;
+    overflow: auto;
+    margin-top: 6px;
+}

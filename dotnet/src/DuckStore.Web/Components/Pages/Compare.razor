@@ -1,0 +1,275 @@
+@page "/compare"
+@implements IDisposable
+@inject ComparisonRunner Runner
+@inject AnalyticsApiClient Analytics
+@inject ISnackbar Snackbar
+
+<PageTitle>Compare</PageTitle>
+
+<MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+    <MudText Typo="Typo.h4">Compare: Postgres vs DuckDB</MudText>
+    <MudSpacer />
+    <MudCheckBox T="bool" @bind-Value="_usePostgres" Label="Postgres direct" Disabled="_runningAll" />
+    <MudCheckBox T="bool" @bind-Value="_useDuckDb" Label="DuckDB service" Disabled="_runningAll" />
+    @if (_runningAll)
+    {
+        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">Stop</MudButton>
+    }
+    else
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="RunAllAsync"
+                   Disabled="@(_busy || (!_usePostgres && !_useDuckDb))">Run all</MudButton>
+    }
+</MudStack>
+
+<MudText Typo="Typo.body1" Class="mb-3" Style="max-width: 95ch">
+    Each question is answered two ways. <b>Postgres direct</b>: the web app sends SQL to Postgres over the Postgres protocol,
+    on the normalized store tables. <b>DuckDB service</b>: the web app calls the analytics service over HTTP; it queries its
+    DuckDB file (star schema) and sends the rows back as JSON. Postgres only counts orders up to the warehouse watermark,
+    so both answer on the same data, and the page checks that the results match. Runs are sequential, so they do not
+    compete for the CPU. The first run of a query is slower (caches are cold): run it again to see warm numbers.
+</MudText>
+
+@if (_context is not null)
+{
+    <MudText Typo="Typo.body2" Class="mb-3" Style="opacity: .8">
+        @ContextText(_context)
+    </MudText>
+}
+
+<MudPaper Outlined Class="pa-3 mb-4">
+    <MudStack Row Wrap="Wrap.Wrap" Spacing="4" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.body2" Style="font-weight: 600">Where the time goes:</MudText>
+        @foreach (var (kind, text) in Legend)
+        {
+            <MudText Typo="Typo.body2"><span class="swatch" style="background: @TimingBar.ColorFor(kind, IsDarkMode)"></span>@text</MudText>
+        }
+    </MudStack>
+</MudPaper>
+
+@if (_state.Values.Any(s => s.Postgres is not null || s.DuckDb is not null))
+{
+    <MudPaper Outlined Class="pa-3 mb-4">
+        <MudText Typo="Typo.h6" Class="mb-2">Summary</MudText>
+        <MudSimpleTable Dense Elevation="0">
+            <thead><tr><th>Question</th><th class="num">Postgres direct</th><th class="num">DuckDB service</th><th>Faster</th><th>Result</th></tr></thead>
+            <tbody>
+                @foreach (var a in AnalyticCatalog.All)
+                {
+                    var s = _state[a.Id];
+                    if (s.Postgres is null && s.DuckDb is null) continue;
+                    <tr>
+                        <td><a href="@($"compare#{a.Id}")">@a.Title</a></td>
+                        <td class="num">@Total(s.Postgres)</td>
+                        <td class="num">@Total(s.DuckDb)</td>
+                        <td>@Faster(s)</td>
+                        <td>
+                            @if (s.Check is { } c)
+                            {
+                                <MudText Typo="Typo.body2" Color="@(c.Same ? Color.Success : Color.Error)">@(c.Same ? "✓ same" : "✗ different")</MudText>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    </MudPaper>
+}
+
+@foreach (var analytic in AnalyticCatalog.All)
+{
+    var s = _state[analytic.Id];
+    <MudPaper Outlined Class="pa-4 mb-4" id="@analytic.Id">
+        <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.h6">@analytic.Title</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindText(analytic.Kind)</MudChip>
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" Disabled="@(_busy || (!_usePostgres && !_useDuckDb))"
+                       OnClick="() => RunOneAsync(analytic)">@(s.Postgres is null && s.DuckDb is null ? "Run" : "Run again")</MudButton>
+        </MudStack>
+        <MudText Typo="Typo.body2" Class="mt-1">@analytic.Question</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3" Style="opacity: .7">@analytic.Explanation</MudText>
+
+        <MudGrid Spacing="4">
+            <MudItem xs="12" md="6">
+                <ApproachPanel Title="Postgres direct" Path="web → Postgres (store tables)" Run="s.Postgres" Running="s.RunningPostgres"
+                               Sql="@ComparisonRunner.PostgresSqlFor(analytic.Id)" ScaleMs="Scale(s)" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <ApproachPanel Title="DuckDB service" Path="web → HTTP → analytics service → DuckDB (star schema)" Run="s.DuckDb" Running="s.RunningDuckDb"
+                               Sql="@(_duckSql.GetValueOrDefault(analytic.Id) ?? "(ask the analytics service)")" ScaleMs="Scale(s)" />
+            </MudItem>
+        </MudGrid>
+
+        @if (s.Check is { } check)
+        {
+            <MudAlert Severity="@(check.Same ? Severity.Success : Severity.Warning)" Dense Class="mt-3">
+                @check.Message
+                @if (!check.Same && analytic.Id == "customer-orders")
+                {
+                    <span> Postgres shows the live status of each order; the warehouse shows the status at ETL time.</span>
+                }
+            </MudAlert>
+        }
+    </MudPaper>
+}
+
+@code {
+    [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
+
+    private sealed class CardState
+    {
+        public ApproachRun? Postgres;
+        public ApproachRun? DuckDb;
+        public bool RunningPostgres;
+        public bool RunningDuckDb;
+        public ResultCheck? Check;
+    }
+
+    private readonly Dictionary<string, CardState> _state = AnalyticCatalog.All.ToDictionary(a => a.Id, _ => new CardState());
+    private Dictionary<string, string> _duckSql = [];
+    private ComparisonContext? _context;
+    private bool _usePostgres = true;
+    private bool _useDuckDb = true;
+    private bool _busy;
+    private bool _runningAll;
+    private CancellationTokenSource _cts = new();
+
+    private static readonly (PhaseKind, string)[] Legend =
+    [
+        (PhaseKind.Database, "database work (execute, produce rows)"),
+        (PhaseKind.Transfer, "network: Postgres protocol or HTTP between containers"),
+        (PhaseKind.Json, "JSON serialize and parse"),
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _duckSql = (await Analytics.AnalyticsSqlAsync()).ToDictionary(a => a.Id, a => a.Sql);
+        }
+        catch (Exception e) when (e is HttpRequestException or AnalyticsServiceException)
+        {
+            _useDuckDb = false;
+        }
+        _context = await Runner.PrepareAsync();
+    }
+
+    private async Task RunOneAsync(AnalyticDefinition analytic)
+    {
+        _busy = true;
+        var ct = NewRun();
+        try
+        {
+            _context = await Runner.PrepareAsync(ct);
+            await RunAsync(analytic, ct);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RunAllAsync()
+    {
+        _busy = _runningAll = true;
+        var ct = NewRun();
+        try
+        {
+            _context = await Runner.PrepareAsync(ct);
+            foreach (var analytic in AnalyticCatalog.All)
+            {
+                ct.ThrowIfCancellationRequested();
+                await RunAsync(analytic, ct);
+            }
+            Snackbar.Add("All questions ran.", Severity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("Stopped.", Severity.Info);
+        }
+        finally
+        {
+            _busy = _runningAll = false;
+        }
+    }
+
+    // One question: Postgres first, then DuckDB, never at the same time.
+    private async Task RunAsync(AnalyticDefinition analytic, CancellationToken ct)
+    {
+        var s = _state[analytic.Id];
+        try
+        {
+            if (_usePostgres)
+            {
+                s.RunningPostgres = true;
+                StateHasChanged();
+                s.Postgres = await Runner.RunPostgresAsync(analytic.Id, _context!, ct);
+                s.RunningPostgres = false;
+                StateHasChanged();
+            }
+            if (_useDuckDb)
+            {
+                s.RunningDuckDb = true;
+                StateHasChanged();
+                s.DuckDb = await Runner.RunDuckDbAsync(analytic.Id, _context!, ct);
+            }
+        }
+        finally
+        {
+            s.RunningPostgres = s.RunningDuckDb = false;
+        }
+        s.Check = s.Postgres?.Result is not null && s.DuckDb?.Result is not null
+            ? ComparisonRunner.Check(s.Postgres.Result, s.DuckDb.Result)
+            : null;
+        StateHasChanged();
+    }
+
+    private void Stop() => _cts.Cancel();
+
+    private static string ContextText(ComparisonContext c)
+    {
+        var warehouse = c.Warehouse is { } w
+            ? $"warehouse built {w.BuiltAt:yyyy-MM-dd HH:mm} UTC, {w.SizeBytes / 1e6:N0} MB, DuckDB {w.DuckDbVersion}, {w.Threads} threads"
+            : "the analytics service is not reachable: Postgres only";
+        return $"Orders up to #{c.MaxOrderId:N0} ({warehouse}) · lookup customer #{c.CustomerId}";
+    }
+
+    private CancellationToken NewRun()
+    {
+        if (_cts.IsCancellationRequested)
+        {
+            _cts.Dispose();
+            _cts = new CancellationTokenSource();
+        }
+        return _cts.Token;
+    }
+
+    private static double Scale(CardState s) => Math.Max(s.Postgres?.TotalMs ?? 0, s.DuckDb?.TotalMs ?? 0);
+
+    private static string Total(ApproachRun? run) => run is null ? "" : run.Error is not null ? "error" : Format.Ms(run.TotalMs);
+
+    private static string Faster(CardState s)
+    {
+        if (s.Postgres is not { Error: null, TotalMs: > 0 } pg || s.DuckDb is not { Error: null, TotalMs: > 0 } duck) return "";
+        return pg.TotalMs <= duck.TotalMs
+            ? $"Postgres, {duck.TotalMs / pg.TotalMs:0.#}×"
+            : $"DuckDB, {pg.TotalMs / duck.TotalMs:0.#}×";
+    }
+
+    private static string KindText(AnalyticKind kind) => kind switch
+    {
+        AnalyticKind.BigResult => "large result",
+        AnalyticKind.Lookup => "lookup by key",
+        _ => "analytics",
+    };
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
