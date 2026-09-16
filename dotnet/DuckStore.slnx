@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DuckStore.Web/DuckStore.Web.csproj" />
+  </Folder>
+</Solution>

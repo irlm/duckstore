@@ -12,3 +12,7 @@
 
 # logs
 *.log
+
+# .NET build output
+dotnet/**/bin/
+dotnet/**/obj/
