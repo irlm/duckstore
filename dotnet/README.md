@@ -70,6 +70,8 @@ make docker-compare   # the Compare questions in the terminal (see below)
 make docker-etl       # rebuild the warehouse; the running service switches to the new file
 make docker-logs      # follow the analytics and web logs
 make docker-indexes   # add the covering indexes of the Postgres tuning experiment (make docker-indexes-drop removes them)
+make docker-loadtest  # store traffic alone, with reports on Postgres, with reports on the DuckDB service
+make docker-loadtest-separate   # the same, with Postgres and the analytics service on their own CPU cores
 make down             # stop the containers (data stays in the volumes)
 make reset            # stop and delete all data
 ```
@@ -333,6 +335,74 @@ Limits: Toxiproxy adds a delay but does not make the link slower or lose packets
 proxy is still local, so a 4 MB response does not pay the extra round trips a real long-distance connection needs
 while TCP grows its sending window. Over a real 25 ms link the large result would be slower than shown here.
 
+### Load test: do reports slow down the store?
+
+The Compare page runs one question at a time. In production, customers use the store while other people run reports.
+The **Load test** page (CLI: `dotnet DuckStore.Web.dll loadtest`, or `make docker-loadtest`) measures that:
+
+- **Store traffic:** 100 operations per second for 60 seconds, after 5 seconds of warm-up. 70% product pages (three
+  reads by key in one round trip), 20% order histories (a lookup), 10% checkouts: one transaction that locks the stock
+  rows, updates them and inserts the order, its lines, a payment and a shipment.
+- **Open loop:** operations start on schedule even when Postgres is slow, and latency counts from the scheduled start,
+  so waiting for a free connection counts too. A test that sends the next request only when the last one finished
+  would hide a slow database, because it would simply send fewer requests.
+- **Report users:** 2 people, each running 5 analytics questions one after the other (brand returns, active customers,
+  sales leaders, unusual days, revenue per month), on Postgres (store tables) or through the DuckDB service (star schema).
+- **p95 and p99:** 95% and 99% of the operations were faster than this. Customers remember the slow page, so the tail
+  matters more than the average.
+
+It ran twice. First, all containers shared the laptop's 16 threads (`make docker-loadtest`). Then each server got its
+own cores, like separate machines (`make docker-loadtest-separate`, which uses `docker update --cpuset-cpus`): Postgres 4
+cores, the analytics service 3 cores, the web app with the load generator 1 core. Every operation of both runs is in
+[docs/results/loadtest-shared-cpu.csv](../docs/results/loadtest-shared-cpu.csv) and
+[docs/results/loadtest-separate-cores.csv](../docs/results/loadtest-separate-cores.csv).
+
+**All containers share the CPU** (p95 / p99 in ms):
+
+| Store operation | Store only | + reports on Postgres | + reports on DuckDB service |
+|---|---:|---:|---:|
+| Product page | 1.4 / 2.1 | 4.9 / 14.1 | 4.4 / 6.6 |
+| Order history | 0.7 / 1.5 | 1.2 / 3.5 | 3.2 / 5.9 |
+| Checkout | 18.5 / 23.5 | **35.0 / 88.4** | 24.6 / 30.3 |
+| Reports finished in 60 s | | 15 (median 3.9 s) | 366 (median 359 ms) |
+
+**Each server on its own cores** (p95 / p99 in ms):
+
+| Store operation | Store only | + reports on Postgres | + reports on DuckDB service |
+|---|---:|---:|---:|
+| Product page | 1.8 / 2.3 | 5.2 / 10.0 | **1.5 / 2.5** |
+| Order history | 1.4 / 8.8 | 2.9 / 5.5 | **0.8 / 1.1** |
+| Checkout | 18.5 / 24.3 | **27.5 / 75.4** | **19.4 / 23.9** |
+| Reports finished in 60 s | | 15 (median 4.6 s) | 182 (median 707 ms) |
+
+What the numbers say:
+
+- **Reports on the store's database hurt the store's slowest moments.** With reports on Postgres, the checkout p99 went
+  from 24 ms to 75-88 ms, 3-4× worse, and the worst 5-second window of checkouts had a p95 of 69-79 ms instead of about
+  20 ms. The median barely moved (9 ms to 11-12 ms): an average would hide the problem. The reports and the store
+  compete for the same CPU cores, and each report query can use up to 8 parallel workers.
+- **On its own cores, the DuckDB service did not affect the store.** Checkout p95 19.4 ms vs 18.5 ms without reports,
+  product page 1.5 ms vs 1.8 ms. This is the production setup: analytics on another server.
+- **On the same machine, DuckDB competes for the CPU too.** DuckDB uses every core for each query, so with shared cores
+  the store also got slower during DuckDB reports (checkout p95 24.6 ms, order history p95 3.2 ms), although the tail
+  suffered much less than with reports on Postgres (checkout p99 30 ms vs 88 ms). Running the analytics service next to
+  the database saves a server, not CPU.
+- **The reports themselves finish.** In 60 seconds the Postgres report users finished 15 reports (revenue per month
+  alone takes 15 s). The DuckDB users finished 182 reports on 3 cores and 366 on the shared 16 threads.
+
+Limits: one 60-second run per scenario; the load generator runs on the same machine; 100 operations per second is a
+small store; every scenario places about 600 orders, whose ids are above the warehouse watermark, so the Compare results
+do not change. Analyze the raw data with DuckDB:
+
+```sql
+SELECT scenario, operation,
+       quantile_cont(latency_ms, 0.95) AS p95, quantile_cont(latency_ms, 0.99) AS p99
+FROM 'loadtest-separate-cores.csv'
+WHERE ok AND second >= 5          -- after the warm-up
+GROUP BY ALL
+ORDER BY ALL;
+```
+
 ### The same measurement in the terminal
 
 ```bash
@@ -376,7 +446,9 @@ src/DuckStore.Web/              the web app
   Services/AnalyticsApiClient.cs typed HttpClient for the analytics service
   Services/Comparison.cs        runs a question both ways, repeats, splits the time into phases
   Services/CompareCommand.cs    the terminal version of the Compare page
-  Components/Pages/             Home, Products, Reports, Etl, Compare
+  Services/NetworkLab.cs        slows the connections down through Toxiproxy
+  Services/LoadTest.cs          store traffic (open loop) with report users; LoadTestCommand.cs for the terminal
+  Components/Pages/             Home, Products, Reports, Etl, Compare, LoadTest
 tests/DuckStore.Web.Tests/      product API tests over the real Postgres
 tests/DuckStore.Analytics.Tests/ ETL, lock, report and SQL splitter tests
 ../analytics/                   one folder per Compare question: store.sql, star.sql or star.<engine>.sql
@@ -423,7 +495,9 @@ Next to a 300 ms analytics query that is noise; next to a 1 ms lookup by key it 
 
 Split DuckDB into its own service when:
 
-- **The ETL or heavy reports slow down the web requests.** DuckDB uses every core for one query.
+- **The ETL or heavy reports slow down the web requests.** Measured in the load test: reports on the store's Postgres
+  made the checkout p99 3-4× worse; the DuckDB service on its own cores left the store unchanged. On the same cores
+  DuckDB slows the store down too, because it uses every core for each query.
 - **Several applications** need the same warehouse, not only this web app.
 - **It scales, deploys or belongs to a team differently** from the web app.
 

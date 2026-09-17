@@ -124,6 +124,11 @@ the slowest questions up to 2.6× faster. Covering indexes helped less (between 
 on the question) and cost 2.9 GB. A network delay of 25 ms each way adds about 50 ms to every question, which
 decides lookups but hardly matters for analytics.
 
+A load test runs store traffic (100 operations per second, including checkout transactions) while two people run
+reports. Reports on the store's Postgres made the checkout p99 3-4× worse (24 ms to 75-88 ms). Reports through the
+DuckDB service on its own CPU cores left the store unchanged, and finished 182 reports in a minute where Postgres
+finished 15.
+
 Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
 **"one backend or two?"**
 
