@@ -1,0 +1,217 @@
+@page "/loadtest"
+@implements IDisposable
+@inject LoadTestRunner Runner
+@inject ISnackbar Snackbar
+
+<PageTitle>Load test</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-2">Load test: do reports slow down the store?</MudText>
+<MudText Typo="Typo.body1" Class="mb-2" Style="max-width: 100ch">
+    Customers use the store while other people run reports. Each scenario sends the same <b>store traffic</b> to
+    Postgres for @_duration seconds: @_rate operations per second, 70% product pages (3 reads by key), 20% order histories
+    (a lookup) and 10% checkouts (a write transaction that locks stock rows, updates them and inserts an order, its lines,
+    a payment and a shipment). At the same time, <b>report users</b> run analytics questions one after the other, either on
+    the same Postgres (store tables) or through the analytics service (DuckDB, star schema).
+</MudText>
+<MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
+    The traffic is <i>open loop</i>: operations start on schedule even when the database is slow, like customers who do not
+    wait for each other, and latency counts from the scheduled start. All containers share this machine's CPU; run
+    <code>make docker-loadtest-separate</code> to give Postgres and the analytics service their own cores, like separate servers.
+    The orders placed by the test get ids above the warehouse watermark, so they do not change the Compare results.
+</MudText>
+
+<MudPaper Outlined Class="pa-3 mb-4">
+    <MudStack Row Wrap="Wrap.Wrap" Spacing="3" AlignItems="AlignItems.Center">
+        <MudNumericField T="int" @bind-Value="_rate" Label="Store operations / s" Min="10" Max="500" Step="10" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_running" Style="max-width: 170px" />
+        <MudNumericField T="int" @bind-Value="_duration" Label="Seconds per scenario" Min="10" Max="600" Step="10" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_running" Style="max-width: 170px" />
+        <MudNumericField T="int" @bind-Value="_reportUsers" Label="Report users" Min="1" Max="8" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_running" Style="max-width: 130px" />
+        @foreach (var scenario in Enum.GetValues<ReportTarget>())
+        {
+            <MudCheckBox T="bool" Value="_scenarios.Contains(scenario)" ValueChanged="v => Toggle(scenario, v)" Label="@scenario.Name()" Dense Disabled="_running" />
+        }
+        <MudSpacer />
+        @if (_running)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">Stop</MudButton>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="RunAsync" Disabled="@(_scenarios.Count == 0)">
+                Run (about @(((_duration + Warmup) * _scenarios.Count + 59) / 60) min)
+            </MudButton>
+        }
+    </MudStack>
+    @if (_progress is { } p)
+    {
+        <MudText Typo="Typo.body2" Class="mt-3">
+            Scenario @p.ScenarioNumber of @p.ScenarioCount: <b>@p.Scenario.Name()</b> · @p.Elapsed.ToString("0") of @p.Duration s
+            (first @Warmup s not counted) · @p.StoreDone.ToString("N0") store operations · @p.ReportsDone reports
+        </MudText>
+        <MudProgressLinear Color="Color.Primary" Value="@(100.0 * ((p.ScenarioNumber - 1) * p.Duration + p.Elapsed) / (p.ScenarioCount * p.Duration))" Class="mt-1" />
+    }
+</MudPaper>
+
+@if (_results is { Count: > 0 } results)
+{
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6">p95 latency of the store (ms)</MudText>
+        <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .8">95% of the operations finished faster than this.</MudText>
+        <MudChart T="double" ChartType="ChartType.Bar" ChartSeries="@P95Series()" ChartLabels="@OperationLabels" ChartOptions="@BarOptions()" Width="100%" Height="300px" />
+    </MudPaper>
+
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudStack Row AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.h6">p95 latency over time (ms)</MudText>
+            <MudSpacer />
+            <MudSelect T="StoreOperation" @bind-Value="_timelineOperation" Label="Operation" Dense Variant="Variant.Outlined" Style="max-width: 180px">
+                @foreach (var op in Enum.GetValues<StoreOperation>())
+                {
+                    <MudSelectItem Value="op">@op.Name()</MudSelectItem>
+                }
+            </MudSelect>
+        </MudStack>
+        <MudText Typo="Typo.body2" Class="mb-2" Style="opacity: .8">One point per 5 seconds, from the end of the warm-up. Spikes are moments when a report was working hardest.</MudText>
+        <MudChart T="double" ChartType="ChartType.Line" ChartSeries="@TimelineSeries()" ChartLabels="@TimelineLabels()" ChartOptions="@LineOptions()" Width="100%" Height="300px" />
+    </MudPaper>
+
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" Class="mb-2">All numbers</MudText>
+        <div class="table-scroll">
+            <MudSimpleTable Dense Elevation="0">
+                <thead>
+                    <tr><th>Scenario</th><th>Operation</th><th class="num">Done</th><th class="num">Per second</th><th class="num">p50 ms</th><th class="num">p95 ms</th><th class="num">p99 ms</th><th class="num">Max ms</th><th class="num">Failed</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var result in results)
+                    {
+                        var rows = result.Store.Concat(result.Reports == ReportTarget.None ? [] : [result.ReportStats]).ToList();
+                        @for (var i = 0; i < rows.Count; i++)
+                        {
+                            var s = rows[i];
+                            <tr>
+                                <td class="nowrap">
+                                    @if (i == 0)
+                                    {
+                                        <span class="swatch" style="background: @ColorFor(result.Reports)"></span>@result.Reports.Name()
+                                    }
+                                </td>
+                                <td>@(s.Name == "report" ? $"reports ({result.ReportStats.Done} finished)" : s.Name)</td>
+                                <td class="num">@s.Done.ToString("N0")</td>
+                                <td class="num">@s.PerSecond.ToString("N1")</td>
+                                <td class="num">@s.P50.ToString("N1")</td>
+                                <td class="num">@s.P95.ToString("N1")</td>
+                                <td class="num">@s.P99.ToString("N1")</td>
+                                <td class="num">@s.Max.ToString("N0")</td>
+                                <td class="num">@s.Failed</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </div>
+    </MudPaper>
+}
+
+@code {
+    [CascadingParameter(Name = "IsDarkMode")] public bool IsDarkMode { get; set; }
+
+    private const int Warmup = 5;
+    private int _rate = 100;
+    private int _duration = 60;
+    private int _reportUsers = 2;
+    private readonly List<ReportTarget> _scenarios = [ReportTarget.None, ReportTarget.Postgres, ReportTarget.DuckDb];
+    private bool _running;
+    private LoadTestProgress? _progress;
+    private IReadOnlyList<ScenarioResult>? _results;
+    private StoreOperation _timelineOperation = StoreOperation.Checkout;
+    private CancellationTokenSource _cts = new();
+
+    private static readonly string[] OperationLabels = Enum.GetValues<StoreOperation>().Select(o => o.Name()).ToArray();
+
+    // Validated palette (dataviz check): the baseline is aqua; Postgres and DuckDB keep the
+    // colors they have on every page (blue, orange). Light and dark steps.
+    private string ColorFor(ReportTarget target) => (target, IsDarkMode) switch
+    {
+        (ReportTarget.None, false) => "#1baf7a",
+        (ReportTarget.None, true) => "#199e70",
+        (ReportTarget.Postgres, false) => "#2a78d6",
+        (ReportTarget.Postgres, true) => "#3987e5",
+        (_, false) => "#eb6834",
+        (_, true) => "#d95926",
+    };
+
+    private void Toggle(ReportTarget scenario, bool on)
+    {
+        _scenarios.Remove(scenario);
+        if (on) _scenarios.Add(scenario);
+        _scenarios.Sort();
+    }
+
+    private async Task RunAsync()
+    {
+        _running = true;
+        _results = null;
+        _cts = new CancellationTokenSource();
+        var options = new LoadTestOptions(_rate, _duration, Warmup, _reportUsers, _scenarios.ToList());
+        try
+        {
+            _results = await Task.Run(() => Runner.RunAsync(options, p =>
+            {
+                _progress = p;
+                _ = InvokeAsync(StateHasChanged);
+            }, _cts.Token));
+            Snackbar.Add("Load test finished.", Severity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("Stopped.", Severity.Info);
+        }
+        finally
+        {
+            _running = false;
+            _progress = null;
+        }
+    }
+
+    private void Stop() => _cts.Cancel();
+
+    private List<ChartSeries<double>> P95Series() =>
+        _results!.Select(r => new ChartSeries<double> { Name = r.Reports.Name(), Data = r.Store.Select(s => Math.Round(s.P95, 1)).ToArray() }).ToList();
+
+    private BarChartOptions BarOptions() => new()
+    {
+        ChartPalette = _results!.Select(r => ColorFor(r.Reports)).ToArray(),
+        ShowLegend = true,
+        YAxisTicks = 5,
+    };
+
+    private const int Window = 5;
+
+    private string[] TimelineLabels() =>
+        Enumerable.Range(0, _duration / Window).Select(i => i % 2 == 0 ? $"{i * Window} s" : "").ToArray();
+
+    private List<ChartSeries<double>> TimelineSeries() => _results!.Select(r => new ChartSeries<double>
+    {
+        Name = r.Reports.Name(),
+        Data = Enumerable.Range(0, _duration / Window).Select(w =>
+        {
+            var from = Warmup + w * Window;
+            var latencies = r.Samples.Where(s => s.Operation == _timelineOperation && s.Ok && s.StartSecond >= from && s.StartSecond < from + Window)
+                .Select(s => s.LatencyMs).ToList();
+            return latencies.Count == 0 ? 0 : Math.Round(LatencyStats.From("", latencies, 0, 1).P95, 1);
+        }).ToArray(),
+    }).ToList();
+
+    private LineChartOptions LineOptions() => new()
+    {
+        ChartPalette = _results!.Select(r => ColorFor(r.Reports)).ToArray(),
+        ShowLegend = true,
+        YAxisTicks = 5,
+    };
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

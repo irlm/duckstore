@@ -1,0 +1,390 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using DuckStore.Contracts;
+using Npgsql;
+
+namespace DuckStore.Web.Services;
+
+/// <summary>Where the report users of a scenario send their questions.</summary>
+public enum ReportTarget
+{
+    /// <summary>No reports: the store traffic alone, the baseline.</summary>
+    None,
+
+    /// <summary>Reports on the same Postgres the store uses (store tables).</summary>
+    Postgres,
+
+    /// <summary>Reports through the analytics service (DuckDB, star schema).</summary>
+    DuckDb,
+}
+
+public enum StoreOperation
+{
+    ProductPage,
+    OrderHistory,
+    Checkout,
+}
+
+/// <param name="Rate">Store operations started per second, whether the previous ones finished or not.</param>
+/// <param name="ReportUsers">People running reports at the same time, each one report after the other.</param>
+/// <param name="WarmupSeconds">Not counted: connections open and caches fill.</param>
+public sealed record LoadTestOptions(
+    int Rate = 100,
+    int DurationSeconds = 60,
+    int WarmupSeconds = 5,
+    int ReportUsers = 2,
+    IReadOnlyList<ReportTarget>? Scenarios = null,
+    IReadOnlyList<string>? ReportQuestions = null)
+{
+    public static IReadOnlyList<string> DefaultReportQuestions { get; } =
+        ["brand-returns", "active-customers", "sales-hierarchy", "unusual-days", "monthly-revenue"];
+
+    public IReadOnlyList<ReportTarget> ScenarioList => Scenarios ?? [ReportTarget.None, ReportTarget.Postgres, ReportTarget.DuckDb];
+
+    public IReadOnlyList<string> QuestionList => ReportQuestions ?? DefaultReportQuestions;
+}
+
+/// <summary>Latency percentiles of one kind of operation, in milliseconds.</summary>
+public sealed record LatencyStats(string Name, int Done, int Failed, double PerSecond, double P50, double P95, double P99, double Max)
+{
+    public static LatencyStats From(string name, IReadOnlyCollection<double> ms, int failed, double seconds)
+    {
+        if (ms.Count == 0) return new(name, 0, failed, 0, 0, 0, 0, 0);
+        var sorted = ms.Order().ToArray();
+        double Percentile(double p) => sorted[Math.Min(sorted.Length - 1, (int)Math.Ceiling(p * sorted.Length) - 1)];
+        return new(name, sorted.Length, failed, sorted.Length / seconds, Percentile(0.50), Percentile(0.95), Percentile(0.99), sorted[^1]);
+    }
+}
+
+public sealed record ScenarioResult(
+    ReportTarget Reports,
+    IReadOnlyList<LatencyStats> Store,
+    LatencyStats ReportStats,
+    int OutOfStock,
+    double MeasuredSeconds,
+    IReadOnlyList<(StoreOperation Operation, double StartSecond, double LatencyMs, bool Ok)> Samples);
+
+public sealed record LoadTestProgress(ReportTarget Scenario, int ScenarioNumber, int ScenarioCount, double Elapsed, int Duration, int StoreDone, int ReportsDone);
+
+public static class LoadTestText
+{
+    public static string Name(this ReportTarget target) => target switch
+    {
+        ReportTarget.None => "store only",
+        ReportTarget.Postgres => "store + reports on Postgres",
+        _ => "store + reports on DuckDB service",
+    };
+
+    public static string Name(this StoreOperation operation) => operation switch
+    {
+        StoreOperation.ProductPage => "product page",
+        StoreOperation.OrderHistory => "order history",
+        _ => "checkout",
+    };
+}
+
+// A load test of the store while people run reports.
+//
+// Store traffic is "open loop": operations START at a fixed rate (100 per second = one every 10 ms),
+// whether the database keeps up or not, like customers who do not wait for each other. Latency is
+// measured from when an operation was due to start, so time spent waiting for a free connection counts
+// too. A closed loop ("next request when the last one finished") would hide a slow database, because a
+// slow database would simply receive fewer requests.
+//
+// Mix: 70% product page (3 reads by key), 20% order history (the lookup of the Compare page),
+// 10% checkout (a write transaction: lock stock rows, update stock, insert order, lines, payment, shipment).
+//
+// Report users run analytics questions one after the other, on Postgres (store tables) or through
+// the analytics service (DuckDB, star schema), during the whole scenario.
+public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner comparison)
+{
+    public async Task<IReadOnlyList<ScenarioResult>> RunAsync(LoadTestOptions options, Action<LoadTestProgress>? progress = null, CancellationToken ct = default)
+    {
+        // The store has its own connection pool, like a separate application: reports (which use the
+        // Compare page's pool) cannot take its connections.
+        var connectionString = config.GetConnectionString("Store")!;
+        await using var store = new NpgsqlDataSourceBuilder(connectionString + ";Maximum Pool Size=64;Application Name=loadtest-store").Build();
+
+        var bounds = await BoundsAsync(store, ct);
+        var context = await comparison.PrepareAsync(ct);
+        var results = new List<ScenarioResult>();
+        var number = 0;
+        foreach (var scenario in options.ScenarioList)
+        {
+            number++;
+            results.Add(await RunScenarioAsync(scenario, number, options, store, bounds, context, progress, ct));
+        }
+        return results;
+    }
+
+    private sealed record Bounds(long MaxProductId, long MaxCustomerId);
+
+    private static async Task<Bounds> BoundsAsync(NpgsqlDataSource store, CancellationToken ct)
+    {
+        await using var command = store.CreateCommand("SELECT (SELECT max(id) FROM store.products), (SELECT max(id) FROM store.customers)");
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        return new Bounds(reader.GetInt64(0), reader.GetInt64(1));
+    }
+
+    private async Task<ScenarioResult> RunScenarioAsync(ReportTarget scenario, int number, LoadTestOptions options,
+        NpgsqlDataSource store, Bounds bounds, ComparisonContext context,
+        Action<LoadTestProgress>? progress, CancellationToken ct)
+    {
+        var samples = new ConcurrentBag<(StoreOperation Operation, double StartSecond, double LatencyMs, bool Ok)>();
+        var reportSamples = new ConcurrentBag<(double StartSecond, double Ms, bool Ok)>();
+        var outOfStock = 0;
+        var total = options.WarmupSeconds + options.DurationSeconds;
+        var clock = Stopwatch.StartNew();
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stop.CancelAfter(TimeSpan.FromSeconds(total));
+
+        // Report users start with the scenario and stop at its end (a running report is cancelled).
+        var reportTasks = scenario == ReportTarget.None ? Array.Empty<Task>() : Enumerable.Range(0, options.ReportUsers).Select(user => Task.Run(async () =>
+        {
+            var question = user;
+            while (!stop.IsCancellationRequested)
+            {
+                var id = options.QuestionList[question++ % options.QuestionList.Count];
+                var start = clock.Elapsed.TotalSeconds;
+                try
+                {
+                    var approach = scenario == ReportTarget.Postgres ? Approach.PostgresStore : Approach.DuckDbStar;
+                    var run = await comparison.RunAsync(approach, id, context, NetworkSetting.Direct, stop.Token);
+                    reportSamples.Add((start, run.TotalMs, run.Error is null));
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        })).ToArray();
+
+        // Store traffic: open loop at a fixed rate.
+        var running = new List<Task>();
+        var interval = TimeSpan.FromSeconds(1.0 / options.Rate);
+        using var concurrency = new SemaphoreSlim(64);
+        for (long i = 0; ; i++)
+        {
+            var due = interval * i;
+            if (due.TotalSeconds >= total || ct.IsCancellationRequested) break;
+            var wait = due - clock.Elapsed;
+            if (wait > TimeSpan.Zero) await Task.Delay(wait, CancellationToken.None);
+
+            var operation = (Random.Shared.Next(100)) switch
+            {
+                < 70 => StoreOperation.ProductPage,
+                < 90 => StoreOperation.OrderHistory,
+                _ => StoreOperation.Checkout,
+            };
+            running.Add(Task.Run(async () =>
+            {
+                var ok = true;
+                await concurrency.WaitAsync(CancellationToken.None);
+                try
+                {
+                    var placed = await RunStoreOperationAsync(operation, store, bounds, CancellationToken.None);
+                    if (!placed) Interlocked.Increment(ref outOfStock);
+                }
+                catch (Exception e) when (e is NpgsqlException or InvalidOperationException or TimeoutException)
+                {
+                    ok = false;
+                }
+                finally
+                {
+                    concurrency.Release();
+                }
+                samples.Add((operation, due.TotalSeconds, (clock.Elapsed - due).TotalMilliseconds, ok));
+            }));
+
+            if (i % options.Rate == 0)
+            {
+                progress?.Invoke(new LoadTestProgress(scenario, number, options.ScenarioList.Count, clock.Elapsed.TotalSeconds, total, samples.Count, reportSamples.Count));
+                running.RemoveAll(t => t.IsCompleted);
+            }
+        }
+
+        await Task.WhenAll(running);
+        await Task.WhenAll(reportTasks);
+
+        // Count only what started after the warm-up.
+        var measured = samples.Where(s => s.StartSecond >= options.WarmupSeconds).ToList();
+        var seconds = (double)options.DurationSeconds;
+        var storeStats = Enum.GetValues<StoreOperation>().Select(op => LatencyStats.From(op.Name(),
+            measured.Where(s => s.Operation == op && s.Ok).Select(s => s.LatencyMs).ToList(),
+            measured.Count(s => s.Operation == op && !s.Ok), seconds)).ToList();
+        var reportMeasured = reportSamples.Where(r => r.StartSecond >= options.WarmupSeconds).ToList();
+        var reportStats = LatencyStats.From("report", reportMeasured.Where(r => r.Ok).Select(r => r.Ms).ToList(), reportMeasured.Count(r => !r.Ok), seconds);
+
+        progress?.Invoke(new LoadTestProgress(scenario, number, options.ScenarioList.Count, total, total, samples.Count, reportSamples.Count));
+        return new ScenarioResult(scenario, storeStats, reportStats, outOfStock, seconds, measured.OrderBy(s => s.StartSecond).ToList());
+    }
+
+    /// <returns>False when a checkout found no stock and rolled back.</returns>
+    private static async Task<bool> RunStoreOperationAsync(StoreOperation operation, NpgsqlDataSource store, Bounds bounds, CancellationToken ct)
+    {
+        await using var connection = await store.OpenConnectionAsync(ct);
+        switch (operation)
+        {
+            case StoreOperation.ProductPage:
+                await ProductPageAsync(connection, Random.Shared.NextInt64(1, bounds.MaxProductId + 1), ct);
+                return true;
+            case StoreOperation.OrderHistory:
+                await OrderHistoryAsync(connection, Random.Shared.NextInt64(1, bounds.MaxCustomerId + 1), ct);
+                return true;
+            default:
+                return await CheckoutAsync(connection, bounds, ct);
+        }
+    }
+
+    // What a product page reads: the product, its stock per warehouse, its rating. Three reads by key.
+    private static async Task ProductPageAsync(NpgsqlConnection connection, long productId, CancellationToken ct)
+    {
+        await using var batch = new NpgsqlBatch(connection)
+        {
+            BatchCommands =
+            {
+                new("""
+                    SELECT p.name, p.price_usd, b.name AS brand, c.name AS category
+                    FROM store.products p
+                    JOIN store.brands b ON b.id = p.brand_id
+                    JOIN store.categories c ON c.id = p.category_id
+                    WHERE p.id = $1
+                    """) { Parameters = { new() { Value = productId } } },
+                new("""
+                    SELECT w.code, i.quantity_on_hand
+                    FROM store.inventory i
+                    JOIN store.warehouses w ON w.id = i.warehouse_id
+                    WHERE i.product_id = $1
+                    ORDER BY w.code
+                    """) { Parameters = { new() { Value = productId } } },
+                new("""
+                    SELECT count(*), round(avg(rating), 2)
+                    FROM store.reviews
+                    WHERE product_id = $1
+                    """) { Parameters = { new() { Value = productId } } },
+            },
+        };
+        await using var reader = await batch.ExecuteReaderAsync(ct);
+        do
+        {
+            while (await reader.ReadAsync(ct)) { }
+        } while (await reader.NextResultAsync(ct));
+    }
+
+    // A customer's 20 latest orders, as the order history page shows them.
+    private static async Task OrderHistoryAsync(NpgsqlConnection connection, long customerId, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT o.id, o.placed_at, o.status, o.total, o.currency_code
+            FROM store.orders o
+            WHERE o.customer_id = $1
+            ORDER BY o.placed_at DESC, o.id DESC
+            LIMIT 20
+            """, connection) { Parameters = { new() { Value = customerId } } };
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) { }
+    }
+
+    // A checkout: one transaction, like the Go store's (internal/web/checkout.go), without the cart.
+    private static async Task<bool> CheckoutAsync(NpgsqlConnection connection, Bounds bounds, CancellationToken ct)
+    {
+        var customerId = Random.Shared.NextInt64(1, bounds.MaxCustomerId + 1);
+        var productIds = Enumerable.Range(0, Random.Shared.Next(1, 4)).Select(_ => Random.Shared.NextInt64(1, bounds.MaxProductId + 1)).Distinct().Order().ToArray();
+        var quantities = productIds.Select(_ => Random.Shared.Next(1, 3)).ToArray();
+
+        await using var tx = await connection.BeginTransactionAsync(ct);
+
+        // 1. Lock the stock rows in a fixed order (no deadlocks), and pick a warehouse per line.
+        var warehouses = new long[productIds.Length];
+        await using (var stock = new NpgsqlCommand("""
+            SELECT product_id, warehouse_id, quantity_on_hand
+            FROM store.inventory
+            WHERE product_id = ANY($1)
+            ORDER BY warehouse_id, product_id
+            FOR UPDATE
+            """, connection, tx) { Parameters = { new() { Value = productIds } } })
+        await using (var reader = await stock.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var line = Array.IndexOf(productIds, reader.GetInt64(0));
+                if (warehouses[line] == 0 && reader.GetInt32(2) >= quantities[line]) warehouses[line] = reader.GetInt64(1);
+            }
+        }
+        if (warehouses.Contains(0))
+        {
+            await tx.RollbackAsync(ct);
+            return false;
+        }
+
+        // 2. Take the stock for all lines in one statement.
+        await using (var update = new NpgsqlCommand("""
+            UPDATE store.inventory i
+            SET quantity_on_hand = i.quantity_on_hand - x.qty, updated_at = now()
+            FROM unnest($1::bigint[], $2::bigint[], $3::int[]) AS x(warehouse_id, product_id, qty)
+            WHERE i.warehouse_id = x.warehouse_id AND i.product_id = x.product_id
+            """, connection, tx)
+        {
+            Parameters = { new() { Value = warehouses }, new() { Value = productIds }, new() { Value = quantities } },
+        })
+        {
+            await update.ExecuteNonQueryAsync(ct);
+        }
+
+        // 3. The order in the customer's currency, its lines, the payment and one shipment. The totals are
+        //    computed in SQL from the current prices and today's exchange rate.
+        await using (var insert = new NpgsqlCommand("""
+            WITH customer AS (
+                SELECT c.id, co.currency_code,
+                       (SELECT a.id FROM store.addresses a WHERE a.customer_id = c.id AND a.kind = 'shipping'
+                        ORDER BY a.is_default DESC, a.id LIMIT 1) AS address_id,
+                       (SELECT f.units_per_usd FROM store.fx_rates f WHERE f.currency_code = co.currency_code
+                        ORDER BY f.rate_date DESC LIMIT 1) AS fx
+                FROM store.customers c JOIN store.countries co ON co.code = c.country_code
+                WHERE c.id = $1
+            ),
+            lines AS (
+                SELECT x.line_no, x.product_id, x.warehouse_id, x.qty, round(p.price_usd * cu.fx, 2) AS unit_price
+                FROM unnest($2::bigint[], $3::bigint[], $4::int[]) WITH ORDINALITY AS x(product_id, warehouse_id, qty, line_no)
+                JOIN store.products p ON p.id = x.product_id
+                CROSS JOIN customer cu
+            ),
+            new_order AS (
+                INSERT INTO store.orders (customer_id, shipping_address_id, status, currency_code,
+                                          subtotal, discount, shipping_fee, tax, total, placed_at, updated_at)
+                SELECT cu.id, cu.address_id, 'paid', cu.currency_code, s.subtotal, 0, 0, 0, s.subtotal, now(), now()
+                FROM customer cu CROSS JOIN (SELECT sum(unit_price * qty) AS subtotal FROM lines) s
+                RETURNING id, total
+            ),
+            new_lines AS (
+                INSERT INTO store.order_items (order_id, line_no, product_id, warehouse_id, quantity, unit_price, discount)
+                SELECT o.id, l.line_no, l.product_id, l.warehouse_id, l.qty, l.unit_price, 0
+                FROM new_order o CROSS JOIN lines l
+            ),
+            payment AS (
+                INSERT INTO store.payments (order_id, method, status, amount, paid_at)
+                SELECT id, 'card', 'captured', total, now() FROM new_order
+            )
+            INSERT INTO store.shipments (order_id, warehouse_id, carrier, tracking_number, status)
+            SELECT o.id, $5, 'Load Test Express', 'LT' || o.id, 'preparing' FROM new_order o
+            """, connection, tx)
+        {
+            Parameters =
+            {
+                new() { Value = customerId },
+                new() { Value = productIds },
+                new() { Value = warehouses },
+                new() { Value = quantities },
+                new() { Value = warehouses[0] },
+            },
+        })
+        {
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+        return true;
+    }
+}

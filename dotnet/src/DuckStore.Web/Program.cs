@@ -20,6 +20,7 @@ builder.Services.AddSingleton<StoreQueries>();
 // A plain Npgsql data source for the Compare page (raw SQL, precise timing).
 builder.Services.AddSingleton(_ => Npgsql.NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Store")!));
 builder.Services.AddSingleton<ComparisonRunner>();
+builder.Services.AddSingleton<LoadTestRunner>();
 
 // The analytics service (DuckDB), reached over HTTP.
 builder.Services.AddHttpClient<AnalyticsApiClient>(client =>
@@ -47,10 +48,17 @@ builder.Services.AddMudServices(options => options.SnackbarConfiguration.Positio
 
 var app = builder.Build();
 
-// `dotnet DuckStore.Web.dll compare [id ...]`: run the Compare questions both ways and print the timings.
+// `dotnet DuckStore.Web.dll compare [id ...]`: run the Compare questions and print the timings.
 if (args is ["compare", .. var ids])
 {
     await CompareCommand.RunAsync(app.Services.GetRequiredService<ComparisonRunner>(), ids);
+    return;
+}
+
+// `dotnet DuckStore.Web.dll loadtest`: store traffic with and without reports, latency percentiles.
+if (args is ["loadtest", .. var loadArgs])
+{
+    await LoadTestCommand.RunAsync(app.Services.GetRequiredService<LoadTestRunner>(), loadArgs);
     return;
 }
 

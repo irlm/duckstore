@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-compare docker-logs dotnet-star
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-loadtest docker-loadtest-separate docker-compare docker-logs dotnet-star
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -86,6 +86,24 @@ docker-indexes:
 ## docker-indexes-drop: remove those indexes again, to measure without them
 docker-indexes-drop:
 	docker compose exec -T postgres psql -U store -d store -v ON_ERROR_STOP=1 -f - < analytics/postgres-indexes-drop.sql
+
+## docker-loadtest: store traffic alone, with reports on Postgres, with reports on the DuckDB service (shared CPU)
+docker-loadtest:
+	docker compose exec web dotnet DuckStore.Web.dll loadtest $(ARGS)
+
+# CPUs for docker-loadtest-separate (a 16-thread machine: 4 cores for Postgres, 3 for analytics, 1 for web + proxy).
+PG_CPUS ?= 0-7
+ANALYTICS_CPUS ?= 8-13
+APP_CPUS ?= 14-15
+
+## docker-loadtest-separate: the same, with Postgres and the analytics service on their own cores, like separate servers
+docker-loadtest-separate:
+	docker update --cpuset-cpus $(PG_CPUS) duckstore-postgres
+	docker update --cpuset-cpus $(ANALYTICS_CPUS) duckstore-analytics
+	docker update --cpuset-cpus $(APP_CPUS) duckstore-web duckstore-toxiproxy
+	docker compose exec web dotnet DuckStore.Web.dll loadtest $(ARGS); status=$$?; \
+	docker update --cpuset-cpus 0-$$(($$(nproc) - 1)) duckstore-postgres duckstore-analytics duckstore-web duckstore-toxiproxy; \
+	exit $$status
 
 ## docker-compare: run every Compare question from the web container and print the timings
 docker-compare:
