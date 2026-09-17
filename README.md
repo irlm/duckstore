@@ -110,14 +110,19 @@ runs, and shows the median split into database, network and JSON time, with the 
 
 | Question | Postgres · store tables | DuckDB · store tables | Postgres · star schema | DuckDB · star schema |
 |---|---:|---:|---:|---:|
-| Year-over-year growth by department | 49.7 s | 15.3 s | 2.82 s | **159 ms** |
-| Revenue per month in USD | 36.6 s | 2.43 s | 6.62 s | **281 ms** |
-| Delivery time percentiles | 13.0 s | 6.61 s | 12.8 s | **320 ms** |
-| All order lines of one day (42,581 rows) | 280 ms | 461 ms | **109 ms** | 239 ms |
-| One customer's latest orders (lookup by key) | 0.7 ms | 10.0 ms | **0.4 ms** | 3.5 ms |
+| Year-over-year growth by department | 29.4 s | 14.9 s | 2.82 s | **159 ms** |
+| Revenue per month in USD | 15.0 s | 2.30 s | 6.62 s | **281 ms** |
+| Delivery time percentiles | 13.0 s | 6.53 s | 12.8 s | **320 ms** |
+| All order lines of one day (42,581 rows) | 134 ms | 190 ms | **109 ms** | 239 ms |
+| One customer's latest orders (lookup by key) | 0.6 ms | 12.8 ms | **0.4 ms** | 3.5 ms |
 
 The engine and the data model both matter: with the same SQL on the same tables DuckDB was 2-21× faster, and the
-star schema added up to 18× on Postgres and 96× on DuckDB. Postgres still wins lookups by key and large results.
+star schema added up to 11× on Postgres and 94× on DuckDB. Postgres still wins lookups by key and large results.
+
+Postgres was tuned first, as a DBA would: the plans showed a wrong row estimate, and a table with statistics made
+the slowest questions up to 2.6× faster. Covering indexes helped less (between 40% faster and 25% slower, depending
+on the question) and cost 2.9 GB. A network delay of 25 ms each way adds about 50 ms to every question, which
+decides lookups but hardly matters for analytics.
 
 Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
 **"one backend or two?"**

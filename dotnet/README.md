@@ -69,6 +69,7 @@ Other commands:
 make docker-compare   # the Compare questions in the terminal (see below)
 make docker-etl       # rebuild the warehouse; the running service switches to the new file
 make docker-logs      # follow the analytics and web logs
+make docker-indexes   # add the covering indexes of the Postgres tuning experiment (make docker-indexes-drop removes them)
 make down             # stop the containers (data stays in the volumes)
 make reset            # stop and delete all data
 ```
@@ -133,44 +134,47 @@ plan (`EXPLAIN ANALYZE`, it runs), with a short guide to reading that engine's p
 ### Results at scale 5
 
 Median of 5 runs after 1 warm-up run, measured with `compare --runs 5 --warmup 1` inside the web container on an
-AMD Ryzen 7 5825U (8 cores / 16 threads), 28 GB RAM, NVMe SSD, all three containers on the same laptop. Data: scale 5
+AMD Ryzen 7 5825U (8 cores / 16 threads), 28 GB RAM, NVMe SSD, all containers on the same laptop. Data: scale 5
 = 1.5M customers, 150k products, 12.5M orders, 26.5M order lines. Postgres 18 with the settings in
-`docker-compose.yml` (up to 8 parallel workers per query), DuckDB 1.5.5 with 16 threads and a 6 GB memory limit.
-**All 15 questions gave the same result in all four approaches.** Every run is in
+`docker-compose.yml` (up to 8 parallel workers per query) and no extra indexes, DuckDB 1.5.5 with 16 threads and a
+6 GB memory limit. **All 15 questions gave the same result in all four approaches.** The store-table columns were
+measured after the store SQL was tuned (see [Tuning Postgres](#tuning-postgres-statistics-and-indexes)); the
+star-schema columns come from the run before, which that change does not touch. Every run is in
 [docs/results/compare-scale5.csv](../docs/results/compare-scale5.csv).
 
 | Question | Postgres · store | DuckDB · store | Postgres · star | DuckDB · star | Engine, store tables | Engine, star schema | Model, Postgres | Model, DuckDB |
 |---|---:|---:|---:|---:|---|---|---|---|
-| Revenue per month | 36.6 s | 2.43 s | 6.62 s | 281 ms | DuckDB 15× | DuckDB 24× | star 5.5× | star 8.7× |
-| Revenue by category with subtotals | 63.0 s | 12.0 s | 20.7 s | 2.51 s | DuckDB 5.3× | DuckDB 8.3× | star 3.0× | star 4.8× |
-| Active customers per month | 2.96 s | 865 ms | 3.05 s | 204 ms | DuckDB 3.4× | DuckDB 15× | about equal | star 4.2× |
-| Cohort retention | 19.5 s | 1.90 s | 21.7 s | 442 ms | DuckDB 10× | DuckDB 49× | store 1.1× | star 4.3× |
-| RFM customer segments | 14.8 s | 1.44 s | 12.6 s | 426 ms | DuckDB 10× | DuckDB 30× | star 1.2× | star 3.4× |
-| Top 3 products per department | 25.9 s | 4.03 s | 2.90 s | 443 ms | DuckDB 6.4× | DuckDB 6.6× | star 8.9× | star 9.1× |
-| Products bought together | 11.3 s | 544 ms | 7.44 s | 237 ms | DuckDB 21× | DuckDB 31× | star 1.5× | star 2.3× |
-| Return rate by brand | 4.72 s | 416 ms | 2.93 s | 227 ms | DuckDB 11× | DuckDB 13× | star 1.6× | star 1.8× |
-| Delivery time percentiles | 13.0 s | 6.61 s | 12.8 s | 320 ms | DuckDB 2.0× | DuckDB 40× | about equal | star 21× |
-| Revenue by sales leader | 8.16 s | 871 ms | 990 ms | 145 ms | DuckDB 9.4× | DuckDB 6.8× | star 8.2× | star 6.0× |
-| Unusual days | 2.06 s | 308 ms | 183 ms | 7.7 ms | DuckDB 6.7× | DuckDB 24× | star 11× | star 40× |
-| Year-over-year growth by department | 49.7 s | 15.3 s | 2.82 s | 159 ms | DuckDB 3.2× | DuckDB 18× | star 18× | star 96× |
-| Customer lifetime value buckets | 12.4 s | 756 ms | 8.63 s | 194 ms | DuckDB 16× | DuckDB 45× | star 1.4× | star 3.9× |
-| All order lines of one day (42,581 rows) | 280 ms | 461 ms | **109 ms** | 239 ms | Postgres 1.6× | Postgres 2.2× | star 2.6× | star 1.9× |
-| One customer's latest orders (lookup) | 0.7 ms | 10.0 ms | **0.4 ms** | 3.5 ms | Postgres 14× | Postgres 9× | star 1.7× | star 2.8× |
+| Revenue per month | 15.0 s | 2.30 s | 6.62 s | 281 ms | DuckDB 6.5× | DuckDB 24× | star 2.3× | star 8.2× |
+| Revenue by category with subtotals | 48.7 s | 11.5 s | 20.7 s | 2.51 s | DuckDB 4.2× | DuckDB 8.3× | star 2.4× | star 4.6× |
+| Active customers per month | 2.99 s | 849 ms | 3.05 s | 204 ms | DuckDB 3.5× | DuckDB 15× | about equal | star 4.2× |
+| Cohort retention | 19.2 s | 1.87 s | 21.7 s | 442 ms | DuckDB 10× | DuckDB 49× | store 1.1× | star 4.2× |
+| RFM customer segments | 14.4 s | 1.08 s | 12.6 s | 426 ms | DuckDB 13× | DuckDB 30× | star 1.1× | star 2.5× |
+| Top 3 products per department | 21.4 s | 3.99 s | 2.90 s | 444 ms | DuckDB 5.4× | DuckDB 6.6× | star 7.4× | star 9.0× |
+| Products bought together | 11.2 s | 547 ms | 7.44 s | 237 ms | DuckDB 21× | DuckDB 31× | star 1.5× | star 2.3× |
+| Return rate by brand | 4.79 s | 417 ms | 2.93 s | 227 ms | DuckDB 11× | DuckDB 13× | star 1.6× | star 1.8× |
+| Delivery time percentiles | 13.0 s | 6.53 s | 12.8 s | 320 ms | DuckDB 2.0× | DuckDB 40× | about equal | star 20× |
+| Revenue by sales leader | 3.17 s | 849 ms | 990 ms | 145 ms | DuckDB 3.7× | DuckDB 6.8× | star 3.2× | star 5.9× |
+| Unusual days | 2.03 s | 305 ms | 183 ms | 7.7 ms | DuckDB 6.7× | DuckDB 24× | star 11× | star 40× |
+| Year-over-year growth by department | 29.4 s | 14.9 s | 2.82 s | 159 ms | DuckDB 2.0× | DuckDB 18× | star 10× | star 94× |
+| Customer lifetime value buckets | 11.5 s | 612 ms | 8.63 s | 194 ms | DuckDB 19× | DuckDB 45× | star 1.3× | star 3.2× |
+| All order lines of one day (42,581 rows) | 134 ms | 190 ms | **109 ms** | 239 ms | Postgres 1.4× | Postgres 2.2× | star 1.2× | store 1.3× |
+| One customer's latest orders (lookup) | 0.6 ms | 12.8 ms | **0.4 ms** | 3.5 ms | Postgres 21× | Postgres 9× | star 1.5× | star 3.6× |
 
 What the numbers say:
 
 - **Both the engine and the data model matter, and they multiply.** For the 13 analytics questions, the slowest
-  way (Postgres on the store tables) and the fastest way (DuckDB on the star schema) are 14-312× apart. The engine
-  alone, with the same SQL on the same tables, gave 2-21×. The star schema alone gave up to 18× on Postgres and up
-  to 96× on DuckDB.
-- **The star schema helps DuckDB on every question, Postgres only on some.** Postgres gained where the star schema
-  removed work that dominates in a row store: currency conversion for every order line (revenue per month 5.5×,
-  year-over-year 18×), a recursive walk of the org chart (sales leaders 8.2×), grouping by an expression
-  (`placed_at::date`, unusual days 11×), and a date filter an index can serve. Where the query must read every row
-  of a table anyway (active customers, cohort retention), Postgres gained nothing: a row store reads whole rows,
-  and `dw.fact_orders` has 29 columns where `store.orders` has 13. DuckDB reads only the 2-3 columns it needs.
+  way (Postgres on the store tables) and the fastest way (DuckDB on the star schema) are 15-265× apart. The engine
+  alone, with the same SQL on the same tables, gave 2-21×. The star schema alone gave up to 11× on Postgres and up
+  to 94× on DuckDB.
+- **The star schema helps DuckDB on every analytics question, Postgres only on some.** Postgres gained where the
+  star schema removed work that dominates in a row store: currency conversion for every order line (revenue per
+  month 2.3×, year-over-year 10×), a recursive walk of the org chart (sales leaders 3.2×), grouping by an expression
+  (`placed_at::date`, unusual days 11×), and a date filter an index can serve (top products 7.4×). Where the query
+  must read every row of a table anyway (active customers, cohort retention, RFM, delivery), Postgres gained almost
+  nothing: a row store reads whole rows, and `dw.fact_orders` has 29 columns where `store.orders` has 13. DuckDB
+  reads only the 2-3 columns it needs.
 - **A good model can beat a faster engine.** Postgres on the star schema beat DuckDB on the store tables for top
-  products (2.90 s vs 4.03 s), year-over-year growth (2.82 s vs 15.3 s) and unusual days (183 ms vs 308 ms). The
+  products (2.90 s vs 3.99 s), year-over-year growth (2.82 s vs 14.9 s) and unusual days (183 ms vs 305 ms). The
   plan of top products shows why: Postgres reads only the last 12 months through the `order_date` index, and the
   window function stops after 3 rows per department (`Run Condition` in the plan).
 - **The same SQL is not always good SQL for both engines.** On the store tables DuckDB was only 2× faster for
@@ -179,19 +183,110 @@ What the numbers say:
   it is a cheap integer subtraction. On the scale-1 shipments, that expression took 1.10 s in DuckDB, and
   `extract(epoch FROM delivered_at) - extract(epoch FROM shipped_at)` took 19 ms for the same sum. The star schema
   avoided the problem because the ETL already chose each order's last parcel.
-- **Large results and lookups: Postgres.** For all order lines of one day, 169 ms of DuckDB's 239 ms is network and
-  JSON (4.2 MB). Postgres sends the rows in its binary protocol and wins. For one customer's orders, a B-tree index
-  answers in under 1 ms; DuckDB scans a column (the fact table is sorted by date, so zone maps cannot skip blocks for
-  a customer).
+- **Large results and lookups: Postgres.** For all order lines of one day, most of DuckDB's time is network and JSON
+  (4.2 MB); Postgres sends the rows in its binary protocol. For one customer's orders, a B-tree index answers in
+  under 1 ms; DuckDB scans a column (the fact table is sorted by date, so zone maps cannot skip blocks for a
+  customer).
 - **The service boundary is cheap for small results.** Network plus JSON took 1-5 ms per analytics question, less
   than 1% of the DuckDB time for most of them.
 - **Repeat small measurements.** For the analytics questions, the fastest and the slowest of the 5 runs were less than
-  10% apart in 45 of 52 cases (27% at most). For the large result and the lookup they were up to 75% apart: one run
+  10% apart in 43 of 52 cases (27% at most). For the large result and the lookup they were up to 75% apart: one run
   of those would be a guess.
 
-Limits of this measurement: one machine, so the "network" is a Docker bridge, much faster than a real network, and
-the containers share the same cores and memory; one user at a time; Postgres without partitioning or columnar
-storage.
+Limits of this measurement: one machine, so the containers share the same cores and memory; one user at a time;
+Postgres without partitioning or columnar storage.
+
+### Tuning Postgres: statistics and indexes
+
+A comparison is only fair if Postgres is tuned the way a DBA would tune it in production. So before the results
+above, Postgres got the usual treatment: read the plans, fix what they show, measure again. Every step below is the
+median of 5 runs of Postgres · store tables, unless it says EXPLAIN ANALYZE.
+
+**1. Read the plans.** `EXPLAIN (ANALYZE, BUFFERS)` of the 13 analytics queries (the Plan button on the page) showed
+three kinds of problems:
+
+| What the plans showed | Questions |
+|---|---|
+| **A wrong row estimate.** The first version of the store SQL built one exchange rate per currency per day in a `MATERIALIZED` CTE. A CTE has no statistics, like a table variable in SQL Server, so Postgres estimated that joining 12M orders to it returns **60,670** rows. It returned **12,124,454**. With the small estimate Postgres chose a serial nested loop: 12M index lookups into `order_items`, no parallel workers. | revenue per month, by category, year-over-year, top products, sales leaders, RFM, lifetime value |
+| **Work spilled to disk.** `count(DISTINCT ...)` sorted 25.7M rows on disk (1.2 GB); per-customer hash tables spilled 200-350 MB. | revenue per month, cohort, RFM, lifetime value, delivery |
+| **Reading the table where an index could do.** Order lines looked up in the loops above, the last parcel of each order, the first order of each customer. | several |
+
+**2. Statistics: a real table instead of the CTE.** The daily rates became a table,
+[`store.fx_rates_daily`](../internal/pg/schema/03_fx_rates_daily.sql), built by the seed (a production system would
+rebuild it when new rates arrive). The store SQL joins it, on both engines. Postgres now estimates the join
+correctly and uses parallel hash joins:
+
+| Question | CTE | Table | |
+|---|---:|---:|---|
+| Revenue per month | 36.6 s | 15.0 s | 2.4× faster |
+| Revenue by sales leader | 8.16 s | 3.17 s | 2.6× faster |
+| Year-over-year growth | 49.7 s | 29.4 s | 1.7× faster |
+| Revenue by category | 63.0 s | 48.7 s | 1.3× faster |
+| Top 3 products per department | 25.9 s | 21.4 s | 1.2× faster |
+| Customer lifetime value buckets | 12.4 s | 11.5 s | 1.1× faster |
+
+What did **not** help, tested with EXPLAIN ANALYZE on revenue per month: `SET work_mem = '512MB'` (the sort needs more
+than 1.2 GB, so it still spilled), an expression index on `(placed_at AT TIME ZONE 'UTC')::date` (it gave statistics
+to the orders side of the join, but the problem was the CTE side), and `SET enable_nestloop = off` (a diagnosis tool,
+not a fix: 36 s, still serial because the estimate was still wrong).
+
+**3. Covering indexes.** [analytics/postgres-indexes.sql](../analytics/postgres-indexes.sql) adds three indexes that
+match what the plans read (`make docker-indexes`, `make docker-indexes-drop`):
+
+| Index | For |
+|---|---|
+| `order_items (order_id) INCLUDE (line_no, product_id, quantity, unit_price, discount)` | order lines read per order |
+| `orders (customer_id, placed_at) INCLUDE (id, status, currency_code, total)` | per-customer questions |
+| `shipments (order_id, delivered_at DESC NULLS FIRST, shipped_at DESC NULLS FIRST) INCLUDE (carrier)` | the last parcel per order, in index order |
+
+They took 18 s to build and use **2.9 GB**, 63% of the size of the three tables (4.6 GB). Measured again
+([docs/results/compare-postgres-indexes-scale5.csv](../docs/results/compare-postgres-indexes-scale5.csv)):
+
+| Question | Without | With the 3 indexes | Change | Index the plan uses |
+|---|---:|---:|---:|---|
+| Revenue by sales leader | 3.17 s | 1.91 s | −40% | order lines + customer |
+| Customer lifetime value buckets | 11.5 s | 9.69 s | −16% | customer |
+| RFM customer segments | 14.4 s | 12.6 s | −12% | customer |
+| Delivery time percentiles | 13.0 s | 11.6 s | −11% | shipments |
+| Cohort retention | 19.2 s | 17.8 s | −7% | customer |
+| Active customers per month | 2.99 s | 2.88 s | −4% | customer |
+| Revenue by category with subtotals | 48.7 s | 47.0 s | −3% | order lines |
+| Year-over-year growth | 29.4 s | 28.6 s | −2% | order lines |
+| All order lines of one day | 134 ms | 131 ms | −2% | order lines |
+| Revenue per month | 15.0 s | 15.3 s | +2% | customer |
+| Products bought together | 11.2 s | 11.9 s | +6% | customer |
+| Top 3 products per department | 21.4 s | 22.8 s | +7% | customer |
+| Return rate by brand | 4.79 s | 5.17 s | +8% | customer |
+| Unusual days | 2.03 s | 2.55 s | +25% | customer |
+
+Changes below about 5% are within the run-to-run noise.
+
+The price on writes: copying 100,000 orders with their 211,000 lines and 97,000 shipments in one transaction
+([analytics/postgres-write-cost.sql](../analytics/postgres-write-cost.sql), median of 4 runs, rolled back):
+
+| Insert | Without | With the 3 indexes |
+|---|---:|---:|
+| 100,000 orders | 2.15 s | 2.38 s (+11%) |
+| 211,214 order lines | 3.85 s | 3.99 s (+4%) |
+| 97,035 shipments | 1.08 s | 1.23 s (+14%) |
+
+The order lines index grows at its right end (new order ids are the largest), so it is cheap to maintain; the
+customer index gets inserts all over the tree.
+
+What tuning teaches:
+
+- **Statistics before indexes.** One table with statistics gave up to 2.6×. The best index gave 1.7× on one question
+  and slowed down others.
+- **An index changes plans you did not look at.** Postgres used the customer index in 11 of 15 questions, as a
+  narrower copy of `orders`, not only for per-customer work. In a first attempt, while the CTE was still there, that
+  made revenue per month 65% slower in EXPLAIN ANALYZE: the index returns orders sorted by customer, so the nested
+  loop looked up order lines in random order instead of in id order. Always measure every query, not only the one
+  you tune.
+- **Index-only scans need VACUUM.** The rolled-back write test left 400,000 dead rows; until VACUUM ran, an
+  index-only scan read the table 400,021 times ("Heap Fetches" in the plan) for unusual days.
+- **Tuning closes part of the gap, not all of it.** After tuning, DuckDB on the same tables is still about 2-21× faster
+  for the analytics questions, and on the star schema 15-265× faster than Postgres on the store tables. Postgres still
+  wins lookups and large results. The remaining gap is the storage layout: rows vs columns.
 
 ### Network latency
 

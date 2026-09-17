@@ -62,7 +62,7 @@ public sealed class AnalyticsTests(WebApplicationFactory<Program> factory) : ICl
     public async Task Store_and_star_models_give_the_same_result()
     {
         var info = await _http.GetFromJsonAsync<WarehouseInfo>("/api/warehouse");
-        foreach (var id in new[] { "brand-returns", "unusual-days", "clv-buckets" })
+        foreach (var id in new[] { "brand-returns", "unusual-days", "active-customers" })
         {
             var store = await RunAsync(id, new AnalyticRequest(info!.MaxOrderId, 1, DataModel.Store));
             var star = await RunAsync(id, new AnalyticRequest(info.MaxOrderId, 1, DataModel.Star));
