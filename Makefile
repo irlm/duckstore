@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-loadtest docker-loadtest-separate docker-compare docker-logs dotnet-star
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-pgduckdb docker-loadtest docker-loadtest-separate docker-compare docker-logs dotnet-star
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -86,6 +86,10 @@ docker-indexes:
 ## docker-indexes-drop: remove those indexes again, to measure without them
 docker-indexes-drop:
 	docker compose exec -T postgres psql -U store -d store -v ON_ERROR_STOP=1 -f - < analytics/postgres-indexes-drop.sql
+
+## docker-pgduckdb: enable the pg_duckdb extension (DuckDB's engine inside Postgres) for the Compare page
+docker-pgduckdb:
+	docker compose exec -T postgres psql -U store -d store -v ON_ERROR_STOP=1 -f - < analytics/postgres-pg_duckdb.sql
 
 ## docker-loadtest: store traffic alone, with reports on Postgres, with reports on the DuckDB service (shared CPU)
 docker-loadtest:

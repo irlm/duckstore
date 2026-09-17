@@ -14,7 +14,11 @@ name: duckstore
 
 services:
   postgres:
-    image: postgres:18
+    # The official postgres:18 plus the pg_duckdb extension (docker/postgres.Dockerfile).
+    build:
+      context: .
+      dockerfile: docker/postgres.Dockerfile
+    image: duckstore-postgres
     container_name: duckstore-postgres
     environment:
       POSTGRES_USER: store
@@ -50,6 +54,10 @@ services:
       - max_parallel_workers_per_gather=8
       - -c
       - max_parallel_maintenance_workers=4
+      # pg_duckdb must be loaded when the server starts. It does nothing to normal queries;
+      # it runs a query in DuckDB only when asked (see analytics/postgres-pg_duckdb.sql).
+      - -c
+      - shared_preload_libraries=pg_duckdb
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:

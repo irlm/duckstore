@@ -6,15 +6,17 @@ namespace DuckStore.Web.Services;
 // Terminal version of the Compare page:
 //
 //   dotnet DuckStore.Web.dll compare [--runs 5] [--warmup 1] [--csv results.csv]
-//                                    [--approaches postgres-store,duckdb-store,postgres-star,duckdb-star]
+//                                    [--approaches postgres-store,pgduckdb-store,duckdb-store,postgres-star,pgduckdb-star,duckdb-star]
 //                                    [--latency direct,0,1,5,25] [id ...]
 //
 // --latency runs everything once per network setting: "direct" connections, or through
 // Toxiproxy with N ms added in each direction (0 = the proxy alone).
 //
-// Prints the median of each approach and the two effects:
-//   engine = Postgres ÷ DuckDB on the same data model (same tables, same or equivalent SQL)
-//   model  = store tables ÷ star schema on the same engine
+// Prints the median of each approach and the effects:
+//   engine    = Postgres ÷ DuckDB service on the same data model (same tables, same or equivalent SQL)
+//   model     = store tables ÷ star schema on the same engine
+//   execution = Postgres ÷ pg_duckdb on the store tables (same server, same tables: only the executor differs)
+//   storage   = pg_duckdb ÷ DuckDB service on the store tables (same engine: Postgres rows vs a DuckDB file)
 // With --csv every run (warm-up runs too) is written as one row, so DuckDB can analyze it:
 //   SELECT question, approach, median(total_ms) FROM 'results.csv' WHERE NOT warmup GROUP BY ALL;
 public static class CompareCommand
@@ -59,7 +61,7 @@ public static class CompareCommand
         {
             Console.WriteLine();
             Console.WriteLine($"Network: {network.Label}");
-            Console.WriteLine($"{"question",-28} {"pg store",10} {"duck store",10} {"pg star",10} {"duck star",10}  {"engine:store",12} {"engine:star",11} {"model:pg",9} {"model:duck",10}  result");
+            Console.WriteLine($"{"question",-28} {"pg store",10} {"pgduck store",12} {"duck store",10} {"pg star",10} {"pgduck star",11} {"duck star",10}  {"engine:store",12} {"engine:star",11} {"model:pg",9} {"model:duck",10} {"execution",9} {"storage",8}  result");
 
             foreach (var analytic in AnalyticCatalog.All.Where(a => ids.Count == 0 || ids.Contains(a.Id)))
             {
@@ -67,9 +69,11 @@ public static class CompareCommand
                 string Median(Approach a) => m[a] is { } s ? s.Median is { } run ? Ms(run.TotalMs) : "error" : "-";
                 string Times(double? x) => x is { } v ? v.ToString(v < 10 ? "0.0" : "N0", CultureInfo.CurrentCulture) + "×" : "-";
                 Console.WriteLine(
-                    $"{analytic.Id,-28} {Median(Approach.PostgresStore),10} {Median(Approach.DuckDbStore),10} {Median(Approach.PostgresStar),10} {Median(Approach.DuckDbStar),10}  " +
+                    $"{analytic.Id,-28} {Median(Approach.PostgresStore),10} {Median(Approach.PgDuckDbStore),12} {Median(Approach.DuckDbStore),10} " +
+                    $"{Median(Approach.PostgresStar),10} {Median(Approach.PgDuckDbStar),11} {Median(Approach.DuckDbStar),10}  " +
                     $"{Times(m.Speedup(Approach.PostgresStore, Approach.DuckDbStore)),12} {Times(m.Speedup(Approach.PostgresStar, Approach.DuckDbStar)),11} " +
-                    $"{Times(m.Speedup(Approach.PostgresStore, Approach.PostgresStar)),9} {Times(m.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)),10}  " +
+                    $"{Times(m.Speedup(Approach.PostgresStore, Approach.PostgresStar)),9} {Times(m.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)),10} " +
+                    $"{Times(m.Speedup(Approach.PostgresStore, Approach.PgDuckDbStore)),9} {Times(m.Speedup(Approach.PgDuckDbStore, Approach.DuckDbStore)),8}  " +
                     (m.Check is { } check ? (check.Same ? "same" : "DIFFERENT: " + check.Message) : "-"));
                 foreach (var series in m.Series.Where(s => s.Error is not null))
                 {

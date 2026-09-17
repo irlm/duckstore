@@ -16,16 +16,20 @@ public enum PhaseKind
 
 public sealed record TimingPhase(string Name, double Ms, PhaseKind Kind);
 
-/// <summary>The four ways to answer a question: two engines × two data models.</summary>
+/// <summary>The ways to answer a question: three engines × two data models.</summary>
 public enum Approach
 {
     PostgresStore,
     DuckDbStore,
     PostgresStar,
     DuckDbStar,
+    PgDuckDbStore,
+    PgDuckDbStar,
 }
 
-public sealed record ApproachInfo(Approach Id, string Name, string Slug, bool IsDuckDb, DataModel Model, string Path);
+/// <param name="IsDuckDb">Runs in the analytics service (HTTP), not in Postgres.</param>
+/// <param name="PgDuckDb">Runs in Postgres, executed by DuckDB inside Postgres (the pg_duckdb extension).</param>
+public sealed record ApproachInfo(Approach Id, string Name, string Slug, bool IsDuckDb, DataModel Model, string Path, bool PgDuckDb = false);
 
 public static class Approaches
 {
@@ -35,6 +39,8 @@ public static class Approaches
         new(Approach.DuckDbStore, "DuckDB · store tables", "duckdb-store", true, DataModel.Store, "web → HTTP → analytics service → DuckDB: raw.* copy of the store tables"),
         new(Approach.PostgresStar, "Postgres · star schema", "postgres-star", false, DataModel.Star, "web → Postgres: dw.* copy of the star schema"),
         new(Approach.DuckDbStar, "DuckDB · star schema", "duckdb-star", true, DataModel.Star, "web → HTTP → analytics service → DuckDB: dw.* star schema"),
+        new(Approach.PgDuckDbStore, "pg_duckdb · store tables", "pgduckdb-store", false, DataModel.Store, "web → Postgres → DuckDB inside Postgres: store.* tables", PgDuckDb: true),
+        new(Approach.PgDuckDbStar, "pg_duckdb · star schema", "pgduckdb-star", false, DataModel.Star, "web → Postgres → DuckDB inside Postgres: dw.* copy of the star schema", PgDuckDb: true),
     ];
 
     public static ApproachInfo Info(this Approach approach) => All[(int)approach];
@@ -102,7 +108,8 @@ public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<Approa
 /// <param name="MaxOrderId">The warehouse watermark, so every approach counts the same orders.</param>
 /// <param name="PostgresStarMaxOrderId">The watermark of the star schema copy in Postgres (null = no copy).</param>
 /// <param name="PostgresAnalyticsIndexes">How many indexes of analytics/postgres-indexes.sql exist on the store tables.</param>
-public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId, int PostgresAnalyticsIndexes)
+/// <param name="PgDuckDbVersion">The version of the pg_duckdb extension in Postgres (null = not installed).</param>
+public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId, int PostgresAnalyticsIndexes, string? PgDuckDbVersion = null)
 {
     public string IndexesText => PostgresAnalyticsIndexes == 0
         ? "Postgres store tables without the analytics indexes (make docker-indexes)"
@@ -113,9 +120,11 @@ public sealed record ComparisonContext(long MaxOrderId, long CustomerId, Warehou
     public string? Unavailable(Approach approach) => approach switch
     {
         Approach.DuckDbStore or Approach.DuckDbStar when Warehouse is null => "The analytics service is not reachable.",
-        Approach.PostgresStar when PostgresStarMaxOrderId is null =>
+        Approach.PgDuckDbStore or Approach.PgDuckDbStar when PgDuckDbVersion is null =>
+            "The pg_duckdb extension is not enabled in Postgres. Run `make docker-pgduckdb`.",
+        Approach.PostgresStar or Approach.PgDuckDbStar when PostgresStarMaxOrderId is null =>
             "Postgres has no copy of the star schema yet. Run `make docker-star` (or `dotnet DuckStore.Analytics.dll star-to-postgres`).",
-        Approach.PostgresStar when !PostgresStarReady =>
+        Approach.PostgresStar or Approach.PgDuckDbStar when !PostgresStarReady =>
             $"The star schema copy in Postgres has orders up to #{PostgresStarMaxOrderId:N0}, the warehouse up to #{MaxOrderId:N0}. Run `make docker-star` again.",
         _ => null,
     };
@@ -126,9 +135,30 @@ public sealed record ComparisonContext(long MaxOrderId, long CustomerId, Warehou
 //   DuckDB · store tables:    web app --(HTTP + JSON)--> analytics service --> DuckDB, raw.* (same SQL text)
 //   Postgres · star schema:   web app --(Postgres protocol)--> Postgres, dw.* (copied from the warehouse)
 //   DuckDB · star schema:     web app --(HTTP + JSON)--> analytics service --> DuckDB, dw.*
-public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClient analytics, NetworkLab networkLab)
+public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClient analytics, NetworkLab networkLab, IConfiguration config)
 {
     private static readonly AnalyticSqlLibrary Library = new(typeof(ComparisonRunner).Assembly);
+
+    // Connections for the pg_duckdb approaches: every query on them runs in DuckDB inside Postgres.
+    // See analytics/postgres-pg_duckdb.sql for the settings.
+    private const string PgDuckDbOptions =
+        "-c duckdb.force_execution=true -c duckdb.threads_for_postgres_scan=8 -c duckdb.max_workers_per_postgres_scan=8";
+
+    private readonly Lazy<NpgsqlDataSource> _pgDuckDb = new(() =>
+        NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(config.GetConnectionString("Store")) { Options = PgDuckDbOptions }.ConnectionString));
+
+    private readonly Lazy<NpgsqlDataSource?> _pgDuckDbViaProxy = new(() =>
+        config.GetConnectionString("StoreViaProxy") is { Length: > 0 } cs
+            ? NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(cs) { Options = PgDuckDbOptions }.ConnectionString)
+            : null);
+
+    private NpgsqlDataSource PostgresFor(ApproachInfo info, NetworkSetting network) => (info.PgDuckDb, network.ViaProxy) switch
+    {
+        (false, false) => postgres,
+        (false, true) => networkLab.PostgresViaProxy,
+        (true, false) => _pgDuckDb.Value,
+        (true, true) => _pgDuckDbViaProxy.Value ?? throw new InvalidOperationException("ConnectionStrings:StoreViaProxy is not set."),
+    };
 
     public static string PostgresSqlFor(string id, DataModel model) => Library.For(id, model, "postgres");
 
@@ -167,7 +197,10 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         await using var indexes = postgres.CreateCommand("SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'store' AND indexname LIKE 'analytics\\_%'");
         var analyticsIndexes = (int)(await indexes.ExecuteScalarAsync(ct))!;
 
-        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId, analyticsIndexes);
+        await using var extension = postgres.CreateCommand("SELECT extversion FROM pg_extension WHERE extname = 'pg_duckdb'");
+        var pgDuckDbVersion = await extension.ExecuteScalarAsync(ct) as string;
+
+        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId, analyticsIndexes, pgDuckDbVersion);
     }
 
     /// <summary>
@@ -210,12 +243,13 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             ? RunDuckDbAsync(approach, id, info.Model, context, network, ct)
             : RunPostgresAsync(approach, id, approach.Info().Model, context, network, ct);
 
+
     private async Task<ApproachRun> RunPostgresAsync(Approach approach, string id, DataModel model, ComparisonContext context, NetworkSetting network, CancellationToken ct)
     {
         var sql = PostgresSqlFor(id, model);
         try
         {
-            var source = network.ViaProxy ? networkLab.PostgresViaProxy : postgres;
+            var source = PostgresFor(approach.Info(), network);
             await using var connection = await source.OpenConnectionAsync(ct); // pooled; not timed
             await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 1800 };
             AddParameters(command, sql, context);
@@ -265,7 +299,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             return new ApproachRun(approach, result,
             [
                 new("Round trip to Postgres (measured with SELECT 1)", roundTrip, PhaseKind.Transfer),
-                new("Postgres executes (until the first row)", executeMs - roundTrip, PhaseKind.Database),
+                new(approach.Info().PgDuckDb ? "DuckDB inside Postgres executes (until the first row)" : "Postgres executes (until the first row)", executeMs - roundTrip, PhaseKind.Database),
                 new("Rows over the network + decoding", totalMs - executeMs, PhaseKind.Transfer),
             ], totalMs, null, null);
         }
@@ -321,8 +355,16 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         }
 
         var sql = PostgresSqlFor(id, info.Model);
-        await using var connection = await postgres.OpenConnectionAsync(ct);
-        await using var command = new NpgsqlCommand((analyze ? "EXPLAIN (ANALYZE, BUFFERS, SETTINGS)\n" : "EXPLAIN (SETTINGS)\n") + sql, connection)
+        await using var connection = await PostgresFor(info, NetworkSetting.Direct).OpenConnectionAsync(ct);
+        // pg_duckdb supports plain EXPLAIN and EXPLAIN ANALYZE and returns DuckDB's plan.
+        var explain = (info.PgDuckDb, analyze) switch
+        {
+            (true, true) => "EXPLAIN ANALYZE\n",
+            (true, false) => "EXPLAIN\n",
+            (false, true) => "EXPLAIN (ANALYZE, BUFFERS, SETTINGS)\n",
+            (false, false) => "EXPLAIN (SETTINGS)\n",
+        };
+        await using var command = new NpgsqlCommand(explain + sql, connection)
         {
             CommandTimeout = 1800,
         };
@@ -335,7 +377,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         {
             lines.Add(reader.GetString(0));
         }
-        return new AnalyticPlan(id, "postgres", analyze, string.Join('\n', lines), clock.Elapsed.TotalMilliseconds);
+        return new AnalyticPlan(id, info.PgDuckDb ? "pg_duckdb" : "postgres", analyze, string.Join('\n', lines), clock.Elapsed.TotalMilliseconds);
     }
 
     private static AnalyticRequest Request(ComparisonContext context, DataModel model) => new(context.MaxOrderId, context.CustomerId, model);

@@ -36,10 +36,11 @@
 </MudStack>
 
 <MudText Typo="Typo.body1" Class="mb-2" Style="max-width: 100ch">
-    Each question can run four ways: two <b>engines</b> (Postgres, DuckDB) on two <b>data models</b> (the normalized
-    store tables, and the star schema the ETL builds). On the store tables both engines run the <b>same SQL text</b>,
-    so the difference is the engine. On the same engine, store tables vs star schema shows what the data model is worth.
-    Postgres runs are sent by this web app directly; DuckDB runs go over HTTP to the analytics service and come back as JSON.
+    Each question can run six ways: three <b>engines</b> on two <b>data models</b> (the normalized store tables, and the
+    star schema the ETL builds). <b>Postgres</b> runs the SQL with its own executor. <b>pg_duckdb</b> runs the same SQL in
+    the same Postgres, but DuckDB's engine executes it, reading the Postgres tables. <b>DuckDB</b> runs it in the analytics
+    service, on its own column store file, and sends the rows back over HTTP as JSON. On the store tables all engines run
+    the <b>same SQL text</b>; on the same engine, store tables vs star schema shows what the data model is worth.
     Every approach counts the orders up to the warehouse watermark, and the page checks that all results are equal.
 </MudText>
 <MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
@@ -147,7 +148,7 @@
                                NetworkLabel="@s.Measurement?.Network.Label"
                                Unavailable="@_context?.Unavailable(approach)"
                                Explain="(analyze, ct) => Runner.ExplainAsync(approach, analytic.Id, _context!, analyze, ct)"
-                               PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : PostgresPlanHelp)" Busy="_busy"
+                               PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : info.PgDuckDb ? PgDuckDbPlanHelp : PostgresPlanHelp)" Busy="_busy"
                                Sql="@SqlFor(analytic.Id, info)" ScaleMs="Scale(s)" />
             }
         </div>
@@ -160,6 +161,14 @@
                 star schema @EngineEffect(measurement.Speedup(Approach.PostgresStar, Approach.DuckDbStar)).
                 <b>Data model</b> (same engine): on Postgres @ModelEffect(measurement.Speedup(Approach.PostgresStore, Approach.PostgresStar)),
                 on DuckDB @ModelEffect(measurement.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)).
+                @if (measurement[Approach.PgDuckDbStore] is not null)
+                {
+                    <br />
+                    <span>
+                        <b>Execution</b> (same Postgres tables): @Faster("pg_duckdb", "Postgres", measurement.Speedup(Approach.PostgresStore, Approach.PgDuckDbStore)).
+                        <b>Storage</b> (same DuckDB engine): @Faster("the DuckDB file", "the Postgres tables", measurement.Speedup(Approach.PgDuckDbStore, Approach.DuckDbStore)).
+                    </span>
+                }
             </MudText>
             @if (measurement.Check is { } check)
             {
@@ -185,7 +194,8 @@
     }
 
     // Rows = engine, columns = data model.
-    private static readonly Approach[] GridOrder = [Approach.PostgresStore, Approach.PostgresStar, Approach.DuckDbStore, Approach.DuckDbStar];
+    private static readonly Approach[] GridOrder =
+        [Approach.PostgresStore, Approach.PostgresStar, Approach.PgDuckDbStore, Approach.PgDuckDbStar, Approach.DuckDbStore, Approach.DuckDbStar];
 
     private readonly Dictionary<string, CardState> _state = AnalyticCatalog.All.ToDictionary(a => a.Id, _ => new CardState());
     private readonly HashSet<Approach> _selected = [.. Enum.GetValues<Approach>()];
@@ -211,6 +221,11 @@
         "Read from the bottom boxes up: the scans run first. Each box is one operator; with the actual plan it shows " +
         "the rows it produced and its time. A scan lists only the columns it reads and the filters pushed into it. " +
         "HASH_GROUP_BY and HASH_JOIN work on thousands of rows at a time, like batch mode in SQL Server.";
+
+    private const string PgDuckDbPlanHelp =
+        "Custom Scan (DuckDBScan) means DuckDB ran the query inside Postgres. The boxes are DuckDB's plan, read from the " +
+        "bottom up; TABLE_SCAN on pgduckdb.store.* reads the Postgres table page by page and turns rows into DuckDB " +
+        "vectors, which is usually the slowest part.";
 
     private static readonly (PhaseKind, string)[] Legend =
     [
@@ -343,6 +358,14 @@
         >= 0.9 and <= 1.1 => "about equal",
         >= 1 => $"DuckDB {postgresOverDuckDb:0.#}× faster",
         _ => $"Postgres {1 / postgresOverDuckDb:0.#}× faster",
+    };
+
+    private static string Faster(string first, string second, double? secondOverFirst) => secondOverFirst switch
+    {
+        null => "not measured",
+        >= 0.9 and <= 1.1 => $"{first} and {second} about equal",
+        >= 1 => $"{first} {secondOverFirst:0.#}× faster",
+        _ => $"{second} {1 / secondOverFirst:0.#}× faster",
     };
 
     private static string ModelEffect(double? storeOverStar) => storeOverStar switch
