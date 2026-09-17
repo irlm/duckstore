@@ -28,6 +28,14 @@ builder.Services.AddHttpClient<AnalyticsApiClient>(client =>
     client.Timeout = TimeSpan.FromMinutes(15);
 });
 
+// The network lab of the Compare page: the same services reached through Toxiproxy, which can add delay.
+builder.Services.AddSingleton<NetworkLab>();
+builder.Services.AddHttpClient(NetworkLab.ProxyHttpClient, client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Analytics:BaseUrlViaProxy"] ?? "http://toxiproxy:18080/");
+    client.Timeout = TimeSpan.FromMinutes(15);
+});
+
 // API: OpenAPI document + Scalar UI at /scalar, errors as ProblemDetails.
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();

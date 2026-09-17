@@ -34,7 +34,7 @@
         @if (Series.Runs.Count > 1)
         {
             <MudText Typo="Typo.caption" Style="opacity: .75" title="@AllRuns(Series)">
-                median of @Series.Runs.Count runs · fastest @Format.Ms(Series.MinMs) · slowest @Format.Ms(Series.MaxMs)@(Series.Warmups.Count > 0 ? $" · after {Series.Warmups.Count} warm-up" : "")
+                median of @Series.Runs.Count runs · fastest @Format.Ms(Series.MinMs) · slowest @Format.Ms(Series.MaxMs)@(Series.Warmups.Count > 0 ? $" · after {Series.Warmups.Count} warm-up" : "")@(NetworkLabel is { } n && n != "direct" ? $" · network {n}" : "")
             </MudText>
         }
         else if (Series.Warmups.Count > 0)
@@ -123,6 +123,9 @@
     [Parameter, EditorRequired] public string Title { get; set; } = "";
     [Parameter, EditorRequired] public string Path { get; set; } = "";
     [Parameter] public ApproachSeries? Series { get; set; }
+
+    /// <summary>The network setting of the measurement, e.g. "+5 ms each way".</summary>
+    [Parameter] public string? NetworkLabel { get; set; }
 
     /// <summary>Why this approach cannot run now (for example no star schema copy in Postgres).</summary>
     [Parameter] public string? Unavailable { get; set; }

@@ -1,8 +1,9 @@
-# Three services on one Docker network:
+# Services on one Docker network:
 #
 #   postgres   the store's OLTP database                 127.0.0.1:55432
 #   analytics  DuckDB warehouse + ETL + analytics API    127.0.0.1:5090
 #   web        Blazor UI: CRUD, reports, Compare page    127.0.0.1:5085
+#   toxiproxy  a proxy that can add network delay, for the Compare page (API on 127.0.0.1:8474)
 #
 # `make docker-up` starts them; `make docker-seed SCALE=5` loads data and builds
 # the warehouse. `docker compose up -d postgres` alone is enough for the Go app.
@@ -102,6 +103,10 @@ services:
       ConnectionStrings__Store: Host=postgres;Port=5432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
       # Container to container: the service name is the host name.
       Analytics__BaseUrl: http://analytics:8080/
+      # The same two services through Toxiproxy, for the Compare page's "Network" setting.
+      Network__ToxiproxyUrl: http://toxiproxy:8474/
+      ConnectionStrings__StoreViaProxy: Host=toxiproxy;Port=15432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
+      Analytics__BaseUrlViaProxy: http://toxiproxy:18080/
     ports:
       - "127.0.0.1:5085:8080"
     depends_on:
@@ -109,6 +114,18 @@ services:
         condition: service_healthy
       analytics:
         condition: service_started
+      toxiproxy:
+        condition: service_started
+
+  # Forwards TCP connections and can slow them down on purpose (Shopify's Toxiproxy).
+  # The web app creates two proxies through its API and sets their delay:
+  #   toxiproxy:15432 -> postgres:5432      toxiproxy:18080 -> analytics:8080
+  # Try it by hand: curl http://127.0.0.1:8474/proxies
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    container_name: duckstore-toxiproxy
+    ports:
+      - "127.0.0.1:8474:8474"
 
 volumes:
   pgdata:

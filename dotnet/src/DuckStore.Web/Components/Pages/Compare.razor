@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject ComparisonRunner Runner
 @inject AnalyticsApiClient Analytics
+@inject NetworkLab NetworkLab
 @inject ISnackbar Snackbar
 
 <PageTitle>Compare</PageTitle>
@@ -16,6 +17,13 @@
         }
     </MudSelect>
     <MudCheckBox T="bool" @bind-Value="_warmup" Label="Warm-up run first" Disabled="_busy" />
+    <MudSelect T="string" @bind-Value="_network" Label="Network" Dense Variant="Variant.Outlined" Disabled="@(_busy || !_labReady)" Style="max-width: 210px"
+               HelperText="@(_labReady ? null : "start the toxiproxy container")">
+        @foreach (var code in NetworkCodes)
+        {
+            <MudSelectItem Value="code">@NetworkSetting.Parse(code).Label</MudSelectItem>
+        }
+    </MudSelect>
     @if (_runningAll)
     {
         <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">Stop</MudButton>
@@ -37,7 +45,8 @@
 <MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
     Runs are sequential, so they do not compete for the CPU, and the approaches take turns, so a slow moment hits all of them.
     One run can be unlucky (cold caches, another program busy): use a warm-up run and 3-7 timed runs; the page shows the
-    <b>median</b> run.
+    <b>median</b> run. <b>Network</b> sends both paths through a proxy that adds a delay in each direction: 1 ms is like
+    another server in the same data center, 5 ms another data center in the same city, 25 ms another region.
 </MudText>
 
 <MudStack Row Wrap="Wrap.Wrap" Spacing="3" Class="mb-2" AlignItems="AlignItems.Center">
@@ -77,6 +86,7 @@
                 <thead>
                     <tr>
                         <th>Question</th>
+                        <th>Network</th>
                         @foreach (var info in Approaches.All)
                         {
                             <th class="num">@info.Name</th>
@@ -92,6 +102,7 @@
                         if (_state[a.Id].Measurement is not { } m) continue;
                         <tr>
                             <td><a href="@($"compare#{a.Id}")">@a.Title</a></td>
+                            <td class="nowrap">@m.Network.Label</td>
                             @foreach (var info in Approaches.All)
                             {
                                 <td class="num">@Total(m[info.Id])</td>
@@ -133,6 +144,7 @@
             {
                 var info = approach.Info();
                 <ApproachPanel Title="@info.Name" Path="@info.Path" Series="s.Measurement?[approach]" Progress="@s.Progress.GetValueOrDefault(approach)"
+                               NetworkLabel="@s.Measurement?.Network.Label"
                                Unavailable="@_context?.Unavailable(approach)"
                                Explain="(analyze, ct) => Runner.ExplainAsync(approach, analytic.Id, _context!, analyze, ct)"
                                PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : PostgresPlanHelp)" Busy="_busy"
@@ -143,6 +155,7 @@
         @if (s.Measurement is { } measurement)
         {
             <MudText Typo="Typo.body2" Class="mt-3">
+                <b>Network</b>: @measurement.Network.Label.
                 <b>Engine</b> (same data): store tables @EngineEffect(measurement.Speedup(Approach.PostgresStore, Approach.DuckDbStore)),
                 star schema @EngineEffect(measurement.Speedup(Approach.PostgresStar, Approach.DuckDbStar)).
                 <b>Data model</b> (same engine): on Postgres @ModelEffect(measurement.Speedup(Approach.PostgresStore, Approach.PostgresStar)),
@@ -180,6 +193,10 @@
     private ComparisonContext? _context;
     private int _runs = 1;
     private bool _warmup;
+    private string _network = "direct";
+    private bool _labReady;
+
+    private static readonly string[] NetworkCodes = ["direct", "0", "1", "5", "25"];
     private bool _busy;
     private bool _runningAll;
     private CancellationTokenSource _cts = new();
@@ -214,6 +231,7 @@
         }
         _context = await Runner.PrepareAsync();
         _selected.RemoveWhere(a => _context.Unavailable(a) is not null);
+        _labReady = await NetworkLab.IsReachableAsync();
     }
 
     private void Toggle(Approach approach, bool on)
@@ -271,7 +289,8 @@
         var chosen = _selected.Where(a => _context!.Unavailable(a) is null).ToList();
         try
         {
-            s.Measurement = await Runner.MeasureAsync(analytic.Id, _context!, new MeasureOptions(_runs, _warmup ? 1 : 0, chosen), progress =>
+            var options = new MeasureOptions(_runs, _warmup ? 1 : 0, chosen, NetworkSetting.Parse(_labReady ? _network : "direct"));
+            s.Measurement = await Runner.MeasureAsync(analytic.Id, _context!, options, progress =>
             {
                 foreach (var approach in chosen)
                 {
@@ -321,6 +340,7 @@
     private static string EngineEffect(double? postgresOverDuckDb) => postgresOverDuckDb switch
     {
         null => "not measured",
+        >= 0.9 and <= 1.1 => "about equal",
         >= 1 => $"DuckDB {postgresOverDuckDb:0.#}× faster",
         _ => $"Postgres {1 / postgresOverDuckDb:0.#}× faster",
     };
@@ -328,6 +348,7 @@
     private static string ModelEffect(double? storeOverStar) => storeOverStar switch
     {
         null => "not measured",
+        >= 0.9 and <= 1.1 => "about equal",
         >= 1 => $"star schema {storeOverStar:0.#}× faster",
         _ => $"store tables {1 / storeOverStar:0.#}× faster",
     };

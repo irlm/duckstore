@@ -64,14 +64,15 @@ public sealed record ApproachSeries(Approach Approach, IReadOnlyList<ApproachRun
 /// <param name="Runs">Timed runs; the median of them is shown.</param>
 /// <param name="Warmups">Runs before the timed ones that are not counted: they fill caches and open connections.</param>
 /// <param name="Approaches">Which approaches to run; null = all that are available.</param>
-public sealed record MeasureOptions(int Runs = 1, int Warmups = 0, IReadOnlyCollection<Approach>? Approaches = null);
+/// <param name="Network">Direct connections (null) or through the proxy with a delay (see <see cref="NetworkLab"/>).</param>
+public sealed record MeasureOptions(int Runs = 1, int Warmups = 0, IReadOnlyCollection<Approach>? Approaches = null, NetworkSetting? Network = null);
 
 /// <summary>What is running now, for progress text such as "run 2 of 5".</summary>
 public sealed record MeasureProgress(Approach Approach, int Run, int Of, bool Warmup);
 
 public sealed record ResultCheck(bool Same, string Message);
 
-public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<ApproachSeries> Series)
+public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<ApproachSeries> Series, NetworkSetting Network)
 {
     public ApproachSeries? this[Approach approach] => Series.FirstOrDefault(s => s.Approach == approach);
 
@@ -120,7 +121,7 @@ public sealed record ComparisonContext(long MaxOrderId, long CustomerId, Warehou
 //   DuckDB · store tables:    web app --(HTTP + JSON)--> analytics service --> DuckDB, raw.* (same SQL text)
 //   Postgres · star schema:   web app --(Postgres protocol)--> Postgres, dw.* (copied from the warehouse)
 //   DuckDB · star schema:     web app --(HTTP + JSON)--> analytics service --> DuckDB, dw.*
-public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClient analytics)
+public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClient analytics, NetworkLab networkLab)
 {
     private static readonly AnalyticSqlLibrary Library = new(typeof(ComparisonRunner).Assembly);
 
@@ -175,6 +176,9 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             .Select(a => (Approach: a, Warmups: new List<ApproachRun>(), Runs: new List<ApproachRun>()))
             .ToList();
 
+        var network = options.Network ?? NetworkSetting.Direct;
+        await networkLab.ApplyAsync(network, ct);
+
         var total = options.Warmups + Math.Max(1, options.Runs);
         for (var i = 0; i < total; i++)
         {
@@ -183,30 +187,48 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             {
                 if (warmups.Concat(runs).Any(r => r.Error is not null)) continue; // failed once: do not repeat
                 progress?.Invoke(new MeasureProgress(approach, warmup ? i + 1 : i - options.Warmups + 1, warmup ? options.Warmups : total - options.Warmups, warmup));
-                (warmup ? warmups : runs).Add(await RunAsync(approach, id, context, ct));
+                // Clean up the garbage of the previous run first (not timed), so a .NET garbage collection it
+                // caused does not land in this run: reading 40k rows took 34-242 ms without this.
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                (warmup ? warmups : runs).Add(await RunAsync(approach, id, context, network, ct));
             }
         }
-        return new QuestionMeasurement(id, chosen.Select(c => new ApproachSeries(c.Approach, c.Runs, c.Warmups)).ToList());
+        return new QuestionMeasurement(id, chosen.Select(c => new ApproachSeries(c.Approach, c.Runs, c.Warmups)).ToList(), network);
     }
 
-    public Task<ApproachRun> RunAsync(Approach approach, string id, ComparisonContext context, CancellationToken ct = default) =>
+    public Task<ApproachRun> RunAsync(Approach approach, string id, ComparisonContext context, NetworkSetting network, CancellationToken ct = default) =>
         approach.Info() is { IsDuckDb: true } info
-            ? RunDuckDbAsync(approach, id, info.Model, context, ct)
-            : RunPostgresAsync(approach, id, approach.Info().Model, context, ct);
+            ? RunDuckDbAsync(approach, id, info.Model, context, network, ct)
+            : RunPostgresAsync(approach, id, approach.Info().Model, context, network, ct);
 
-    private async Task<ApproachRun> RunPostgresAsync(Approach approach, string id, DataModel model, ComparisonContext context, CancellationToken ct)
+    private async Task<ApproachRun> RunPostgresAsync(Approach approach, string id, DataModel model, ComparisonContext context, NetworkSetting network, CancellationToken ct)
     {
         var sql = PostgresSqlFor(id, model);
         try
         {
-            await using var connection = await postgres.OpenConnectionAsync(ct); // pooled; not timed
+            var source = network.ViaProxy ? networkLab.PostgresViaProxy : postgres;
+            await using var connection = await source.OpenConnectionAsync(ct); // pooled; not timed
             await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 1800 };
             AddParameters(command, sql, context);
+
+            // The client cannot see how long Postgres itself worked. A trivial query on the same
+            // connection measures one round trip; the fastest of two is taken as the network part
+            // of "until the first row". Not included in the total.
+            var roundTripMs = double.MaxValue;
+            for (var ping = 0; ping < 2; ping++)
+            {
+                await using var select1 = new NpgsqlCommand("SELECT 1", connection);
+                var pingClock = Stopwatch.StartNew();
+                await select1.ExecuteScalarAsync(ct);
+                roundTripMs = Math.Min(roundTripMs, pingClock.Elapsed.TotalMilliseconds);
+            }
 
             var clock = Stopwatch.StartNew();
             await using var reader = await command.ExecuteReaderAsync(ct);
             var hasRow = await reader.ReadAsync(ct);
             var executeMs = clock.Elapsed.TotalMilliseconds;
+            var roundTrip = Math.Min(roundTripMs, executeMs);
 
             var columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
             var rows = new List<object?[]>();
@@ -234,7 +256,8 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
             };
             return new ApproachRun(approach, result,
             [
-                new("Postgres executes (until the first row)", executeMs, PhaseKind.Database),
+                new("Round trip to Postgres (measured with SELECT 1)", roundTrip, PhaseKind.Transfer),
+                new("Postgres executes (until the first row)", executeMs - roundTrip, PhaseKind.Database),
                 new("Rows over the network + decoding", totalMs - executeMs, PhaseKind.Transfer),
             ], totalMs, null, null);
         }
@@ -244,12 +267,13 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         }
     }
 
-    private async Task<ApproachRun> RunDuckDbAsync(Approach approach, string id, DataModel model, ComparisonContext context, CancellationToken ct)
+    private async Task<ApproachRun> RunDuckDbAsync(Approach approach, string id, DataModel model, ComparisonContext context, NetworkSetting network, CancellationToken ct)
     {
         try
         {
+            var client = network.ViaProxy ? networkLab.AnalyticsViaProxy() : analytics;
             var clock = Stopwatch.StartNew();
-            using var response = await analytics.PostAnalyticAsync(id, Request(context, model), ct);
+            using var response = await client.PostAnalyticAsync(id, Request(context, model), ct);
             var httpMs = clock.Elapsed.TotalMilliseconds; // the body is fully downloaded at this point
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
 
@@ -267,7 +291,7 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
                 new("DuckDB executes (until the first row)", execute, PhaseKind.Database),
                 new("DuckDB reads the remaining rows", read, PhaseKind.Database),
                 new("JSON serialize (analytics service)", serialize, PhaseKind.Json),
-                new("HTTP + network between containers", Math.Max(0, httpMs - execute - read - serialize), PhaseKind.Transfer),
+                new("HTTP + network (request and response)", Math.Max(0, httpMs - execute - read - serialize), PhaseKind.Transfer),
                 new("JSON parse (web app)", parseMs, PhaseKind.Json),
             ], clock.Elapsed.TotalMilliseconds, bytes.LongLength, null);
         }

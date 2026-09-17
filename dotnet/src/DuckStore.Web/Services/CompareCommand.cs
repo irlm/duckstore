@@ -6,7 +6,11 @@ namespace DuckStore.Web.Services;
 // Terminal version of the Compare page:
 //
 //   dotnet DuckStore.Web.dll compare [--runs 5] [--warmup 1] [--csv results.csv]
-//                                    [--approaches postgres-store,duckdb-store,postgres-star,duckdb-star] [id ...]
+//                                    [--approaches postgres-store,duckdb-store,postgres-star,duckdb-star]
+//                                    [--latency direct,0,1,5,25] [id ...]
+//
+// --latency runs everything once per network setting: "direct" connections, or through
+// Toxiproxy with N ms added in each direction (0 = the proxy alone).
 //
 // Prints the median of each approach and the two effects:
 //   engine = Postgres ÷ DuckDB on the same data model (same tables, same or equivalent SQL)
@@ -18,6 +22,7 @@ public static class CompareCommand
     public static async Task RunAsync(ComparisonRunner runner, IReadOnlyList<string> args)
     {
         var options = new MeasureOptions();
+        IReadOnlyList<NetworkSetting> networks = [NetworkSetting.Direct];
         string? csvPath = null;
         var ids = new List<string>();
         for (var i = 0; i < args.Count; i++)
@@ -27,6 +32,7 @@ public static class CompareCommand
                 case "--runs": options = options with { Runs = int.Parse(args[++i], CultureInfo.InvariantCulture) }; break;
                 case "--warmup": options = options with { Warmups = int.Parse(args[++i], CultureInfo.InvariantCulture) }; break;
                 case "--csv": csvPath = args[++i]; break;
+                case "--latency": networks = args[++i].Split(',').Select(NetworkSetting.Parse).ToList(); break;
                 case "--approaches":
                     options = options with
                     {
@@ -45,47 +51,51 @@ public static class CompareCommand
         {
             if (context.Unavailable(approach) is { } why) Console.WriteLine($"Skipped {approach.Info().Name}: {why}");
         }
-        Console.WriteLine();
-        Console.WriteLine($"{"question",-28} {"pg store",10} {"duck store",10} {"pg star",10} {"duck star",10}  {"engine:store",12} {"engine:star",11} {"model:pg",9} {"model:duck",10}  result");
-
         await using var csv = csvPath is null ? null : new StreamWriter(csvPath);
-        csv?.WriteLine("question,approach,run,warmup,total_ms,db_ms,network_ms,json_ms,rows,payload_bytes");
+        csv?.WriteLine("question,approach,network,run,warmup,total_ms,db_ms,network_ms,json_ms,rows,payload_bytes");
 
-        foreach (var analytic in AnalyticCatalog.All.Where(a => ids.Count == 0 || ids.Contains(a.Id)))
+        foreach (var network in networks)
         {
-            var m = await runner.MeasureAsync(analytic.Id, context, options);
-            string Median(Approach a) => m[a] is { } s ? s.Median is { } run ? Ms(run.TotalMs) : "error" : "-";
-            string Times(double? x) => x is { } v ? v.ToString(v < 10 ? "0.0" : "N0", CultureInfo.CurrentCulture) + "×" : "-";
-            Console.WriteLine(
-                $"{analytic.Id,-28} {Median(Approach.PostgresStore),10} {Median(Approach.DuckDbStore),10} {Median(Approach.PostgresStar),10} {Median(Approach.DuckDbStar),10}  " +
-                $"{Times(m.Speedup(Approach.PostgresStore, Approach.DuckDbStore)),12} {Times(m.Speedup(Approach.PostgresStar, Approach.DuckDbStar)),11} " +
-                $"{Times(m.Speedup(Approach.PostgresStore, Approach.PostgresStar)),9} {Times(m.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)),10}  " +
-                (m.Check is { } check ? (check.Same ? "same" : "DIFFERENT: " + check.Message) : "-"));
-            foreach (var series in m.Series.Where(s => s.Error is not null))
-            {
-                Console.WriteLine($"   {series.Approach.Info().Name} error: {series.Error}");
-            }
+            Console.WriteLine();
+            Console.WriteLine($"Network: {network.Label}");
+            Console.WriteLine($"{"question",-28} {"pg store",10} {"duck store",10} {"pg star",10} {"duck star",10}  {"engine:store",12} {"engine:star",11} {"model:pg",9} {"model:duck",10}  result");
 
-            if (csv is not null)
+            foreach (var analytic in AnalyticCatalog.All.Where(a => ids.Count == 0 || ids.Contains(a.Id)))
             {
-                foreach (var series in m.Series)
+                var m = await runner.MeasureAsync(analytic.Id, context, options with { Network = network });
+                string Median(Approach a) => m[a] is { } s ? s.Median is { } run ? Ms(run.TotalMs) : "error" : "-";
+                string Times(double? x) => x is { } v ? v.ToString(v < 10 ? "0.0" : "N0", CultureInfo.CurrentCulture) + "×" : "-";
+                Console.WriteLine(
+                    $"{analytic.Id,-28} {Median(Approach.PostgresStore),10} {Median(Approach.DuckDbStore),10} {Median(Approach.PostgresStar),10} {Median(Approach.DuckDbStar),10}  " +
+                    $"{Times(m.Speedup(Approach.PostgresStore, Approach.DuckDbStore)),12} {Times(m.Speedup(Approach.PostgresStar, Approach.DuckDbStar)),11} " +
+                    $"{Times(m.Speedup(Approach.PostgresStore, Approach.PostgresStar)),9} {Times(m.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)),10}  " +
+                    (m.Check is { } check ? (check.Same ? "same" : "DIFFERENT: " + check.Message) : "-"));
+                foreach (var series in m.Series.Where(s => s.Error is not null))
                 {
-                    WriteRows(csv, analytic.Id, series.Warmups, warmup: true);
-                    WriteRows(csv, analytic.Id, series.Runs, warmup: false);
+                    Console.WriteLine($"   {series.Approach.Info().Name} error: {series.Error}");
                 }
-                await csv.FlushAsync();
+
+                if (csv is not null)
+                {
+                    foreach (var series in m.Series)
+                    {
+                        WriteRows(csv, analytic.Id, network, series.Warmups, warmup: true);
+                        WriteRows(csv, analytic.Id, network, series.Runs, warmup: false);
+                    }
+                    await csv.FlushAsync();
+                }
             }
         }
     }
 
-    private static void WriteRows(StreamWriter csv, string id, IReadOnlyList<ApproachRun> runs, bool warmup)
+    private static void WriteRows(StreamWriter csv, string id, NetworkSetting network, IReadOnlyList<ApproachRun> runs, bool warmup)
     {
         for (var i = 0; i < runs.Count; i++)
         {
             var r = runs[i];
             if (r.Error is not null) continue;
             csv.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"{id},{r.Approach.Info().Slug},{i + 1},{(warmup ? "true" : "false")},{r.TotalMs:F3},{r.PhaseMs(PhaseKind.Database):F3},{r.PhaseMs(PhaseKind.Transfer):F3},{r.PhaseMs(PhaseKind.Json):F3},{r.Result?.RowCount},{r.PayloadBytes}"));
+                $"{id},{r.Approach.Info().Slug},{network.Code},{i + 1},{(warmup ? "true" : "false")},{r.TotalMs:F3},{r.PhaseMs(PhaseKind.Database):F3},{r.PhaseMs(PhaseKind.Transfer):F3},{r.PhaseMs(PhaseKind.Json):F3},{r.Result?.RowCount},{r.PayloadBytes}"));
         }
     }
 
