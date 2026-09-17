@@ -12,16 +12,22 @@
     <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
     <EngineChip Engine="DuckDB" Detail="analytics service" />
     <MudSpacer />
+    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Update"
+               OnClick="@(() => StartAsync("incremental"))" Disabled="@(_run?.IsRunning == true || _starting)">
+        Incremental ETL
+    </MudButton>
     <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlayArrow"
-               OnClick="StartAsync" Disabled="@(_run?.IsRunning == true || _starting)">
-        @(_run?.IsRunning == true ? "Running…" : "Run ETL now")
+               OnClick="@(() => StartAsync("full"))" Disabled="@(_run?.IsRunning == true || _starting)">
+        @(_run?.IsRunning == true ? "Running…" : "Full ETL")
     </MudButton>
 </MudStack>
 
 <MudText Typo="Typo.body1" Class="mb-4" Style="max-width: 80ch">
-    The ETL runs inside the <b>analytics service</b>, the only process that writes the DuckDB file. It copies the store
-    from Postgres into a <b>new</b> file, builds the star schema, exports Parquet, then renames the new file over the old
-    one. Reports keep answering from the old file until the swap. This page asks the service for progress every second.
+    The ETL runs inside the <b>analytics service</b>, the only process that writes the DuckDB file. A <b>full</b> ETL copies
+    the store from Postgres into a <b>new</b> file, builds the star schema, exports Parquet, then renames the new file over
+    the old one. An <b>incremental</b> ETL makes a copy-on-write snapshot of the current file, loads only the orders that are
+    new or changed since the last run (plus the small tables and dimensions), and swaps it in the same way. Reports keep
+    answering from the old file until the swap. This page asks the service for progress every second.
 </MudText>
 
 @if (_error is not null)
@@ -36,16 +42,16 @@
             @if (_run.IsRunning)
             {
                 <MudProgressCircular Indeterminate Size="Size.Small" Color="Color.Secondary" />
-                <MudText>Running since @_run.StartedAt.ToString("HH:mm:ss") UTC (started from @_run.Trigger): step @_run.Steps.Count of @_run.ExpectedSteps</MudText>
+                <MudText>@(_run.Mode == "incremental" ? "Incremental" : "Full") ETL running since @_run.StartedAt.ToString("HH:mm:ss") UTC (started from @_run.Trigger): step @_run.Steps.Count of @_run.ExpectedSteps</MudText>
             }
             else if (_run.Error is not null)
             {
-                <MudAlert Severity="Severity.Error" Class="flex-grow-1">The run from @_run.Trigger failed: @_run.Error</MudAlert>
+                <MudAlert Severity="Severity.Error" Class="flex-grow-1">The @_run.Mode run from @_run.Trigger failed: @_run.Error</MudAlert>
             }
             else if (_run.Result is { } result)
             {
                 <MudAlert Severity="Severity.Success" Class="flex-grow-1">
-                    Done in @result.Duration.TotalSeconds.ToString("F1") s: @((result.SizeBytes / 1e6).ToString("N0")) MB,
+                    @(_run.Mode == "incremental" ? "Incremental" : "Full") ETL done in @result.Duration.TotalSeconds.ToString("F1") s: @((result.SizeBytes / 1e6).ToString("N0")) MB,
                     orders up to #@result.MaxOrderId.ToString("N0"). The reports now read this file.
                 </MudAlert>
             }
@@ -72,9 +78,33 @@ else if (_error is null)
     <MudProgressLinear Indeterminate Color="Color.Secondary" />
 }
 
+@if (_history is { Count: > 0 })
+{
+    <MudPaper Outlined Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" GutterBottom>Load history of this warehouse</MudText>
+        <MudSimpleTable Dense Elevation="0">
+            <thead><tr><th>Finished (UTC)</th><th>Mode</th><th class="num">Orders after #</th><th class="num">Up to #</th><th class="num">Orders loaded</th><th class="num">Seconds</th></tr></thead>
+            <tbody>
+                @foreach (var h in _history)
+                {
+                    <tr>
+                        <td>@h.FinishedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td>@h.Mode</td>
+                        <td class="num">@h.FromOrderId.ToString("N0")</td>
+                        <td class="num">@h.ToOrderId.ToString("N0")</td>
+                        <td class="num">@h.ChangedOrders.ToString("N0")</td>
+                        <td class="num">@h.Seconds.ToString("N1")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    </MudPaper>
+}
+
 <MudText Typo="Typo.body2" Style="opacity: .75">
-    Other ways to run it: <code>POST /api/etl/runs</code> on the analytics service, <code>dotnet DuckStore.Analytics.dll etl</code>,
-    or a schedule (<code>Etl:ScheduleMinutes</code>). Only one ETL runs at a time.
+    Other ways to run it: <code>POST /api/etl/runs?mode=full|incremental</code> on the analytics service,
+    <code>dotnet DuckStore.Analytics.dll etl [--incremental]</code>, or a schedule (<code>Etl:ScheduleMinutes</code>,
+    <code>Etl:IncrementalMinutes</code>). Only one ETL runs at a time.
 </MudText>
 
 @code {
@@ -82,6 +112,7 @@ else if (_error is null)
     private WarehouseInfo? _warehouse;
     private Report<BuildStep>? _last;
     private long _ordersSinceEtl;
+    private IReadOnlyList<EtlRunRecord>? _history;
     private string? _error;
     private bool _starting;
     private readonly CancellationTokenSource _stop = new();
@@ -102,6 +133,7 @@ else if (_error is null)
                 _warehouse = await Analytics.WarehouseAsync(_stop.Token);
                 _last = await Analytics.LastBuildStepsAsync(_stop.Token);
                 _ordersSinceEtl = await Store.OrdersAfterAsync(_warehouse.MaxOrderId, _stop.Token);
+                _history = await Analytics.EtlHistoryAsync(_stop.Token);
             }
             _error = null;
         }
@@ -136,12 +168,12 @@ else if (_error is null)
         }
     }
 
-    private async Task StartAsync()
+    private async Task StartAsync(string mode)
     {
         _starting = true;
         try
         {
-            _run = await Analytics.StartEtlAsync();
+            _run = await Analytics.StartEtlAsync(mode);
         }
         catch (AnalyticsServiceException e)
         {

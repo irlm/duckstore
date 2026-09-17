@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-pgduckdb docker-loadtest docker-loadtest-separate docker-compare docker-logs dotnet-star
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-etl-incremental docker-star docker-indexes docker-indexes-drop docker-pgduckdb docker-loadtest docker-loadtest-separate docker-compare docker-logs dotnet-star
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -74,6 +74,10 @@ docker-seed:
 ## docker-etl: rebuild the warehouse in the analytics volume (the running service picks up the new file)
 docker-etl:
 	docker compose run --rm --no-deps analytics etl
+
+## docker-etl-incremental: load only what changed since the last ETL (etl/incremental/incremental.sql)
+docker-etl-incremental:
+	docker compose exec analytics dotnet DuckStore.Analytics.dll etl --incremental
 
 ## docker-star: copy the warehouse's star schema into Postgres (schema dw) for the Compare page's fourth approach
 docker-star:

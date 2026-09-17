@@ -74,8 +74,10 @@ Design decisions:
 - **Watermark.** The highest order id is read first and every order table is filtered by it. Orders placed
   during the ETL wait for the next run, so the warehouse never holds half an order. The number is written into
   the SQL as a literal so DuckDB can push the filter down to Postgres.
-- **Full rebuild.** Rebuilding everything takes about 13 seconds for 14M rows, which is simpler than incremental
-  loads. At a larger scale you would load only new orders (by watermark) and use `MERGE INTO` for changed rows.
+- **Full rebuild, and incremental loads.** Rebuilding everything takes about 13 seconds for 14M rows at scale 1 and
+  60 seconds at scale 5. The .NET version also has an incremental ETL: it copies the current file with a reflink, loads
+  only new and changed orders by watermark and `updated_at`, and swaps the file in the same way (11 seconds at scale 5,
+  proven identical to a full build). See [dotnet/README.md](../dotnet/README.md#incremental-etl).
 - **Build and swap.** DuckDB allows one writer per file. The ETL writes a different file that nobody reads,
   then `rename` replaces the old one atomically. Readers never see a half-built warehouse, and a failed ETL
   leaves the current warehouse untouched.

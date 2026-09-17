@@ -69,6 +69,7 @@ Other commands:
 ```bash
 make docker-compare   # the Compare questions in the terminal (see below)
 make docker-etl       # rebuild the warehouse; the running service switches to the new file
+make docker-etl-incremental   # load only what changed since the last ETL (about 11 s instead of 60 s)
 make docker-logs      # follow the analytics and web logs
 make docker-indexes   # add the covering indexes of the Postgres tuning experiment (make docker-indexes-drop removes them)
 make docker-loadtest  # store traffic alone, with reports on Postgres, with reports on the DuckDB service
@@ -507,6 +508,72 @@ GROUP BY ALL
 ORDER BY question, approach;
 ```
 
+## Incremental ETL
+
+A full ETL copies all 12.5M orders again and rebuilds every table: about 60 seconds at scale 5, plus a heavy read on
+Postgres, and the warehouse is only as fresh as the last run. An **incremental** ETL loads only what changed since the
+last run. Start it with the **Incremental ETL** button on the ETL page, `make docker-etl-incremental`,
+`POST /api/etl/runs?mode=incremental`, `dotnet DuckStore.Analytics.dll etl --incremental`, or on a schedule with
+`Etl:IncrementalMinutes`. A common setup: incremental every few minutes, full once a night.
+
+How it works ([etl/incremental/incremental.sql](../etl/incremental/incremental.sql)):
+
+1. **Snapshot.** The current warehouse file is copied with a **reflink**: on btrfs (and XFS, APFS) both files share their
+   blocks until one of them changes, so the 2.6 GB file "copies" in 15-50 ms instead of 4.3 s. The update runs on the
+   copy while the reports keep reading the old file, and the copy is renamed over it at the end, exactly like a full ETL.
+2. **What changed.** `dw.etl_info` remembers the last run's watermark (highest order id) and when it read Postgres. One
+   query finds the orders to load: ids above the old watermark (new orders), orders whose `updated_at` is after the last
+   run minus 5 minutes (shipped, delivered, cancelled), and orders with returns newer than the last loaded return.
+3. **Delta.** Only those orders' rows (orders, lines, payments, shipments, returns) come from Postgres, through
+   `postgres_query`, which runs the SQL in Postgres with its indexes.
+4. **Replace.** The changed orders are deleted and inserted again in `raw.*` and in the facts. The fact rows come from the
+   **full ETL's own SQL**, run in an in-memory database that holds only the delta, so there is one copy of the business
+   logic. `customer_order_number` (1 = the customer's first order) needs the customer's whole history, so it is
+   recomputed for the affected customers.
+5. **Everything else.** Small tables and dimensions are copied and rebuilt; `dim_product` gets new price versions as SCD
+   Type 2 with stable keys; reviews, inventory and the marts are rebuilt. There is no Parquet export (the full ETL does it).
+
+Measured at scale 5 ([etl/incremental/demo-changes.sql](../etl/incremental/demo-changes.sql) makes the changes):
+
+| Run | What changed in Postgres | Orders loaded | Time |
+|---|---|---:|---:|
+| Full ETL | | 12,511,207 | 58.6-62.2 s |
+| Incremental | nothing (first version, which still rewrote all 650,085 product rows) | 0 | 12.3 s |
+| Incremental | 300 returns, 100 new prices, 20 renamed products | 300 | 10.4 s |
+| Incremental | 1,000 orders shipped, 500 delivered, 200 cancelled, 300 returns, 100 new prices, 20 renames | 2,000 | 12.0 s |
+| Incremental | 292 new orders from the load test (and the orders above again, inside the 5-minute overlap) | 1,992 | 11.1 s |
+| Incremental | the same again: the overlap loads the same orders, with the same result | 1,992 | 11.0 s |
+
+The changed orders themselves took well under a second (finding them 0.3 s, the delta and replacing them about 0.3 s).
+The rest is fixed cost: rebuilding `dim_customer` from 1.5M customers (2.6 s), the "bought together" mart (2.4 s) and copying
+customers, addresses and reviews (about 2.5 s). Those could become incremental too, with an `updated_at` on customers.
+
+**Proof, not hope.** After every round, a full ETL wrote a second file and `compare-warehouses` compared all 37 tables
+row by row (`EXCEPT ALL`), plus the product version every sale points to:
+
+```bash
+docker compose exec analytics dotnet DuckStore.Analytics.dll etl --target /data/full-check.duckdb
+docker compose exec analytics dotnet DuckStore.Analytics.dll compare-warehouses /data/warehouse.duckdb /data/full-check.duckdb
+```
+
+The final result: "The two warehouses hold the same data", 25.7M sales rows included. The first comparison was not
+clean, and that was the point of it: 87 rows of `dim_product` kept old product names. The condition
+`... OR d.color IS DISTINCT FROM p.attributes ->> '$.color'` never matched, because in DuckDB `->>` binds more loosely
+than `OR`: the whole `OR` chain became the left side of `->>`. Parentheses fixed it. No error message would have shown
+this bug; only comparing with a full build did.
+
+What an incremental ETL needs, and where it breaks:
+
+- **Stable surrogate keys.** The full ETL numbers product versions with `row_number()`, which is fine when every fact is
+  rebuilt. An incremental ETL keeps old sales, so old keys must never change: new versions get keys after the highest one.
+- **A reliable change marker.** Status changes are found through `orders.updated_at`, which the store sets. A change made
+  without it (a manual `UPDATE`) or a hard `DELETE` is not seen until the next full ETL. Databases can report every change
+  themselves (logical replication in Postgres, change data capture in SQL Server); that is the next level.
+- **Idempotent steps.** Delete + insert of whole orders, with an overlap window: loading an order twice gives the same
+  result, so a failed or repeated run is harmless.
+- **An occasional full ETL.** The incremental file grew from 2,586 MB to 2,785 MB and stayed there: DuckDB reuses the
+  space of deleted rows but does not shrink the file. A full ETL writes a compact file (2,588 MB) and exports Parquet.
+
 ## The code
 
 ```
@@ -520,6 +587,7 @@ src/DuckStore.Analytics/        the analytics service
   Warehouse/ReportService.cs    report SQL (the same SQL as the Go dashboard)
   Analytics/AnalyticsRunner.cs  runs a question's SQL on DuckDB (store or star model) and times it
   Etl/StarToPostgres.cs         copies the star schema into Postgres (etl/postgres-star/)
+  Etl/WarehouseComparer.cs      compare-warehouses: proves two warehouse files hold the same data
   Etl/WarehouseBuilder.cs       the ETL: lock, new file, ATTACH postgres, run etl/*.sql, Parquet, swap
   Etl/EtlService.cs             runs it in the background for the ETL page, the API and the schedule
   Api/                          minimal API endpoints and error mapping (ProblemDetails)
@@ -535,7 +603,7 @@ src/DuckStore.Web/              the web app
 tests/DuckStore.Web.Tests/      product API tests over the real Postgres
 tests/DuckStore.Analytics.Tests/ ETL, lock, report and SQL splitter tests
 ../analytics/                   one folder per Compare question: store.sql, star.sql or star.<engine>.sql
-../etl/                         the ETL SQL, shared with the Go version
+../etl/                         the ETL SQL, shared with the Go version; etl/incremental/ for incremental loads
 ../docker/                      Dockerfiles for seed, analytics and web
 ```
 
@@ -564,6 +632,8 @@ Design decisions worth reading in the code:
 | Lock file `etl.lock` opened with `FileShare.None` | On Linux/macOS that is an exclusive `flock()`, the same lock the Go ETL takes, so two ETLs can never run at once (tested). |
 | A failed startup or scheduled ETL is logged, not thrown | Otherwise an empty database at the first `docker compose up` would stop the analytics container. |
 | The Docker image installs the `postgres` extension at build time | The container needs no internet access to run the ETL. |
+| Incremental ETL on a reflink copy, then the same swap | The reports never see a half-updated warehouse and a failed run leaves the old file untouched, as with a full ETL, while the copy costs milliseconds on a copy-on-write file system. |
+| `-- @full:` lines in incremental.sql run steps of the full ETL | The fact SQL (currency conversion, SCD2 lookup, last shipment...) exists once. The incremental file only adds what is incremental: finding changes, deleting and inserting, stable keys. |
 | The Postgres image copies pg_duckdb into the official `postgres:18` | The pg_duckdb project's own image is Postgres 18.1 on Debian 12; the data volume was created by the official image on Debian 13. A different C library can sort text differently and break text indexes, so only the extension files are copied. |
 | `RequiresAspNetWebAssets` in the web project | `blazor.web.js` comes from a NuGet package that the SDK adds only when it sees `.razor` files at restore time. The Dockerfile restores from the `.csproj` alone (for layer caching), so without this the pages load but nothing is interactive. |
 

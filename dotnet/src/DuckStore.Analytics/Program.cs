@@ -27,9 +27,29 @@ var app = builder.Build();
 
 switch (args)
 {
-    // `dotnet DuckStore.Analytics.dll etl`: build the warehouse once and exit.
-    case ["etl", ..]:
-        await app.Services.GetRequiredService<WarehouseBuilder>().BuildAsync();
+    // `dotnet DuckStore.Analytics.dll etl [--incremental] [--target /path/warehouse.duckdb]`: build or update
+    // the warehouse once and exit. --target writes somewhere else (for example to compare a full build with
+    // the incrementally updated warehouse).
+    case ["etl", .. var etlArgs]:
+    {
+        var warehouseBuilder = app.Services.GetRequiredService<WarehouseBuilder>();
+        var mode = etlArgs.Contains("--incremental") ? EtlMode.Incremental : EtlMode.Full;
+        var targetIndex = Array.IndexOf(etlArgs, "--target");
+        if (targetIndex >= 0)
+        {
+            var path = Path.GetFullPath(etlArgs[targetIndex + 1]);
+            await warehouseBuilder.BuildAsync(new WarehouseTarget(path, Path.Combine(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path) + "-parquet")), mode);
+        }
+        else
+        {
+            await warehouseBuilder.BuildAsync(mode);
+        }
+        return;
+    }
+
+    // `dotnet DuckStore.Analytics.dll compare-warehouses a.duckdb b.duckdb`: do two warehouse files hold the same data?
+    case ["compare-warehouses", var a, var b]:
+        Environment.ExitCode = await WarehouseComparer.RunAsync(a, b) ? 0 : 1;
         return;
 
     // `dotnet DuckStore.Analytics.dll star-to-postgres`: copy the warehouse's star schema into

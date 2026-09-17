@@ -133,6 +133,9 @@ With pg_duckdb, DuckDB's engine runs inside Postgres on the same tables: 1.5-7×
 analytics questions, with no ETL. It has no indexes, though: a one-customer lookup took about 25 minutes instead of
 0.6 ms. Reading Postgres rows instead of a column file is the rest of the gap to the DuckDB service.
 
+An incremental ETL loads only new and changed orders into a copy-on-write snapshot of the warehouse: 11 seconds instead
+of 60 at scale 5, and a row-by-row comparison proved the result identical to a full build.
+
 Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
 **"one backend or two?"**
 

@@ -136,6 +136,21 @@ public sealed class ReportService(DuckDbWarehouse warehouse, WarehouseSettings s
         ORDER BY step_no
         """, null, ct);
 
+    public async Task<IReadOnlyList<EtlRunRecord>> EtlRunsAsync(CancellationToken ct = default)
+    {
+        await using var connection = await warehouse.OpenAsync(ct);
+        var exists = await connection.ExecuteScalarAsync<long>(
+            "SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'dw' AND table_name = 'etl_runs'");
+        if (exists == 0) return []; // built before load history existed
+        return (await connection.QueryAsync<EtlRunRecord>(new CommandDefinition("""
+            SELECT finished_at AS FinishedAt, mode AS Mode, from_order_id AS FromOrderId, to_order_id AS ToOrderId,
+                   changed_orders AS ChangedOrders, seconds AS Seconds
+            FROM dw.etl_runs
+            ORDER BY finished_at DESC
+            LIMIT 50
+            """, cancellationToken: ct))).ToList();
+    }
+
     private async Task<Report<T>> QueryAsync<T>(string sql, object? parameters, CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();

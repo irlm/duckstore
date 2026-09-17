@@ -58,9 +58,13 @@ public sealed class AnalyticsApiClient(HttpClient http)
         }
     }
 
-    public async Task<EtlRunSnapshot> StartEtlAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<EtlRunRecord>> EtlHistoryAsync(CancellationToken ct = default) =>
+        GetAsync<IReadOnlyList<EtlRunRecord>>("api/etl/history", ct);
+
+    /// <param name="mode">"full" or "incremental".</param>
+    public async Task<EtlRunSnapshot> StartEtlAsync(string mode = "full", CancellationToken ct = default)
     {
-        using var response = await http.PostAsync("api/etl/runs", content: null, ct);
+        using var response = await http.PostAsync($"api/etl/runs?mode={mode}", content: null, ct);
         await EnsureSuccessAsync(response, ct);
         return (await response.Content.ReadFromJsonAsync<EtlRunSnapshot>(ct))!;
     }
