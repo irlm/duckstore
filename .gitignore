@@ -16,3 +16,6 @@
 # .NET build output
 dotnet/**/bin/
 dotnet/**/obj/
+
+# lab passwords and connection settings (see lab/SETUP.md)
+lab/lab.env
