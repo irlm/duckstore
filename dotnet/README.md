@@ -9,7 +9,7 @@ The same store as the Go project, in C#, as **two ASP.NET Core services** that l
 | `DuckStore.Contracts` | The records both services exchange as JSON | |
 
 For the user it is one application. Underneath, each part runs where it works best, and the **Compare** page
-runs 15 questions four ways (two engines × two data models) so you can see what each part is worth.
+runs 15 questions six ways (three engines × two data models) so you can see what each part is worth.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,8 @@ You only need Docker. From the `duckstore` folder:
 ```bash
 make docker-up      # build and start postgres, analytics and web
 make docker-seed    # load the fake store data (SCALE=5 by default) and build the warehouse
-make docker-star    # optional: copy the star schema into Postgres, for the Compare page's fourth approach
+make docker-star    # optional: copy the star schema into Postgres, for the Compare page's star schema approaches
+make docker-pgduckdb   # optional: enable pg_duckdb, DuckDB's engine inside Postgres
 ```
 
 Then open:
@@ -99,11 +100,12 @@ In Development, EF Core prints every SQL statement it runs to the terminal.
 
 ## The Compare page
 
-Each question can run **four ways**: two engines on two data models.
+Each question can run **six ways**: three engines on two data models.
 
 | | Store tables: normalized, as the application writes them | Star schema: facts and dimensions built by the ETL |
 |---|---|---|
 | **Postgres** | `store.*`, sent by the web app over the Postgres protocol | `dw.*`, a copy made by `make docker-star` |
+| **pg_duckdb** | the same `store.*` tables in the same Postgres, executed by DuckDB inside Postgres | the same `dw.*` copy, executed by DuckDB inside Postgres |
 | **DuckDB** | `raw.*`, the ETL's copy of the store tables, through the analytics service | `dw.*`, through the analytics service |
 
 - On the **store tables**, both engines run the **same SQL text** (see [analytics/README.md](../analytics/README.md)),
@@ -289,6 +291,87 @@ What tuning teaches:
 - **Tuning closes part of the gap, not all of it.** After tuning, DuckDB on the same tables is still about 2-21× faster
   for the analytics questions, and on the star schema 15-265× faster than Postgres on the store tables. Postgres still
   wins lookups and large results. The remaining gap is the storage layout: rows vs columns.
+
+### pg_duckdb: DuckDB's engine inside Postgres
+
+[pg_duckdb](https://github.com/duckdb/pg_duckdb) is a Postgres extension that runs a query with DuckDB's engine while
+the data stays in Postgres. It splits the gap between Postgres and the analytics service into two parts:
+
+- **Execution:** Postgres vs pg_duckdb, same server, same tables, same SQL. Only the executor changes: row by row
+  vs vectors on many threads.
+- **Storage:** pg_duckdb vs the DuckDB service, same engine. Only the storage changes: Postgres pages read and
+  converted row by row vs DuckDB's own compressed column file.
+
+Setup: the Postgres image is the official `postgres:18` with the pg_duckdb 1.1 files added
+([docker/postgres.Dockerfile](../docker/postgres.Dockerfile)), `shared_preload_libraries=pg_duckdb` in
+`docker-compose.yml`, and `make docker-pgduckdb` runs `CREATE EXTENSION pg_duckdb`. The Compare page's pg_duckdb
+connections set `duckdb.force_execution = true` and read each Postgres table with 8 threads and 8 workers instead
+of the default 2 and 2 ([analytics/postgres-pg_duckdb.sql](../analytics/postgres-pg_duckdb.sql)); with the defaults,
+unusual days took 1.46 s instead of 0.91 s. Median of 5 runs, scale 5, all 15 results equal to the other approaches.
+
+**Store tables:**
+
+| Question | Postgres | pg_duckdb | DuckDB service | Execution: Postgres → pg_duckdb | Storage: pg_duckdb → DuckDB file |
+|---|---:|---:|---:|---|---|
+| Revenue per month | 15.0 s | 5.26 s | 2.30 s | 2.9× faster | 2.3× faster |
+| Revenue by category with subtotals | 48.7 s | 7.27 s | 11.5 s | 6.7× faster | 1.6× slower |
+| Active customers per month | 2.99 s | 1.64 s | 849 ms | 1.8× faster | 1.9× faster |
+| Cohort retention | 19.2 s | 3.92 s | 1.87 s | 4.9× faster | 2.1× faster |
+| RFM customer segments | 14.4 s | 2.89 s | 1.08 s | 5.0× faster | 2.7× faster |
+| Top 3 products per department | 21.4 s | 9.85 s | 3.99 s | 2.2× faster | 2.5× faster |
+| Products bought together | 11.2 s | 2.35 s | 547 ms | 4.8× faster | 4.3× faster |
+| Return rate by brand | 4.79 s | 3.12 s | 417 ms | 1.5× faster | 7.5× faster |
+| Delivery time percentiles | 13.0 s | 8.10 s | 6.53 s | 1.6× faster | 1.2× faster |
+| Revenue by sales leader | 3.17 s | 3.62 s | 849 ms | 1.1× slower | 4.3× faster |
+| Unusual days | 2.03 s | 918 ms | 305 ms | 2.2× faster | 3.0× faster |
+| Year-over-year growth | 29.4 s | 6.46 s | 14.9 s | 4.5× faster | 2.3× slower |
+| Customer lifetime value buckets | 11.5 s | 1.60 s | 612 ms | 7.2× faster | 2.6× faster |
+| All order lines of one day | **134 ms** | 7.11 s | 190 ms | **53× slower** | 37× faster |
+| One customer's latest orders | **0.6 ms** | **about 25 minutes** (one run) | 12.8 ms | | |
+
+**Star schema:**
+
+| Question | Postgres | pg_duckdb | DuckDB service | Execution: Postgres → pg_duckdb | Storage: pg_duckdb → DuckDB file |
+|---|---:|---:|---:|---|---|
+| Revenue per month | 6.62 s | 3.68 s | 281 ms | 1.8× faster | 13× faster |
+| Revenue by category with subtotals | 20.7 s | 6.32 s | 2.51 s | 3.3× faster | 2.5× faster |
+| Active customers per month | 3.05 s | 1.94 s | 204 ms | 1.6× faster | 9.5× faster |
+| Cohort retention | 21.7 s | 4.53 s | 442 ms | 4.8× faster | 10× faster |
+| RFM customer segments | 12.6 s | 2.20 s | 426 ms | 5.7× faster | 5.2× faster |
+| Top 3 products per department | 2.90 s | 2.57 s | 444 ms | 1.1× faster | 5.8× faster |
+| Products bought together | 7.44 s | 1.54 s | 237 ms | 4.8× faster | 6.5× faster |
+| Return rate by brand | 2.93 s | 2.35 s | 227 ms | 1.3× faster | 10× faster |
+| Delivery time percentiles | 12.8 s | 1.51 s | 320 ms | 8.5× faster | 4.7× faster |
+| Revenue by sales leader | 990 ms | 2.12 s | 145 ms | 2.1× slower | 15× faster |
+| Unusual days | 183 ms | 661 ms | 7.7 ms | 3.6× slower | 86× faster |
+| Year-over-year growth | 2.82 s | 4.50 s | 159 ms | 1.6× slower | 28× faster |
+| Customer lifetime value buckets | 8.63 s | 1.37 s | 194 ms | 6.3× faster | 7.1× faster |
+| All order lines of one day | **109 ms** | 882 ms | 239 ms | 8.1× slower | 3.7× faster |
+| One customer's latest orders | **0.4 ms** | 9.9 ms | 3.5 ms | about 25× slower | 2.8× faster |
+
+What the numbers say:
+
+- **The executor alone is worth a lot.** On the same Postgres tables, pg_duckdb was 1.5-7.2× faster than Postgres for
+  12 of the 13 analytics questions, with no ETL and no second system: the data is always current.
+- **But it has no indexes, and its optimizer is built for analytics.** Every question Postgres answers with an index
+  got slower. The large result took 7.1 s instead of 134 ms: the filter for one day compares `placed_at` with a
+  subquery, so it is not pushed into the Postgres scan and DuckDB reads all 12.5M orders. The lookup of one customer's
+  20 orders ran for about 25 minutes instead of 0.6 ms: DuckDB turned its per-order subqueries (a `LATERAL` exchange
+  rate and a `count(*)` of the lines) into joins over the whole tables, with a window function over an estimated
+  265 million rows, and applied the customer filter at the end. On the star schema, where Postgres has date indexes,
+  pg_duckdb was slower for 5 of the 15 questions.
+- **Storage is the other big part.** With the same engine, DuckDB's own file was faster than reading Postgres tables
+  for every star schema question (2.5-86×) and for 11 of 13 analytics questions on the store tables (1.2-7.5×).
+  Postgres rows have to be read page by page and converted into DuckDB vectors; the DuckDB file stores each column
+  compressed, with min/max values per block.
+- **Two results we could not explain.** On the store tables, pg_duckdb beat the analytics service for year-over-year
+  growth (6.5 s vs 14.9 s) and revenue by category (7.3 s vs 11.5 s). Both plans convert 25.7M order lines to USD
+  with the same DECIMAL → DOUBLE → DECIMAL expression; in the service's plan that projection alone took 11.9 s. The Plan
+  button shows both plans if you want to dig in.
+- **Where it fits.** pg_duckdb gives Postgres analytics that are several times faster on current data, without an
+  ETL. It runs on the Postgres server, so reports still use the CPU and memory the store needs (the load test showed
+  what that costs; `duckdb.max_memory` is 4 GB per connection by default), and it must never run the application's
+  lookups. Set `duckdb.force_execution` only on the connections or role that run reports, never for the whole server.
 
 ### Network latency
 
@@ -481,6 +564,7 @@ Design decisions worth reading in the code:
 | Lock file `etl.lock` opened with `FileShare.None` | On Linux/macOS that is an exclusive `flock()`, the same lock the Go ETL takes, so two ETLs can never run at once (tested). |
 | A failed startup or scheduled ETL is logged, not thrown | Otherwise an empty database at the first `docker compose up` would stop the analytics container. |
 | The Docker image installs the `postgres` extension at build time | The container needs no internet access to run the ETL. |
+| The Postgres image copies pg_duckdb into the official `postgres:18` | The pg_duckdb project's own image is Postgres 18.1 on Debian 12; the data volume was created by the official image on Debian 13. A different C library can sort text differently and break text indexes, so only the extension files are copied. |
 | `RequiresAspNetWebAssets` in the web project | `blazor.web.js` comes from a NuGet package that the SDK adds only when it sees `.razor` files at restore time. The Dockerfile restores from the `.csproj` alone (for layer caching), so without this the pages load but nothing is interactive. |
 
 ## One backend or two?

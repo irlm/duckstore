@@ -129,6 +129,10 @@ reports. Reports on the store's Postgres made the checkout p99 3-4× worse (24 m
 DuckDB service on its own CPU cores left the store unchanged, and finished 182 reports in a minute where Postgres
 finished 15.
 
+With pg_duckdb, DuckDB's engine runs inside Postgres on the same tables: 1.5-7× faster than Postgres for 12 of the 13
+analytics questions, with no ETL. It has no indexes, though: a one-customer lookup took about 25 minutes instead of
+0.6 ms. Reading Postgres rows instead of a column file is the rest of the gap to the DuckDB service.
+
 Read [dotnet/README.md](dotnet/README.md) for all 15 questions, how the time is measured, and the answer to
 **"one backend or two?"**
 

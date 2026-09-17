@@ -52,7 +52,7 @@
 
 <MudStack Row Wrap="Wrap.Wrap" Spacing="3" Class="mb-2" AlignItems="AlignItems.Center">
     <MudText Typo="Typo.body2" Style="font-weight: 600">Run:</MudText>
-    @foreach (var info in Approaches.All)
+    @foreach (var info in GridOrder.Select(a => a.Info()))
     {
         <MudCheckBox T="bool" Value="_selected.Contains(info.Id)" ValueChanged="v => Toggle(info.Id, v)" Label="@info.Name"
                      Disabled="@(_runningAll || _context?.Unavailable(info.Id) is not null)" Dense />
@@ -88,7 +88,7 @@
                     <tr>
                         <th>Question</th>
                         <th>Network</th>
-                        @foreach (var info in Approaches.All)
+                        @foreach (var info in GridOrder.Select(a => a.Info()))
                         {
                             <th class="num">@info.Name</th>
                         }
@@ -104,7 +104,7 @@
                         <tr>
                             <td><a href="@($"compare#{a.Id}")">@a.Title</a></td>
                             <td class="nowrap">@m.Network.Label</td>
-                            @foreach (var info in Approaches.All)
+                            @foreach (var info in GridOrder.Select(a => a.Info()))
                             {
                                 <td class="num">@Total(m[info.Id])</td>
                             }
