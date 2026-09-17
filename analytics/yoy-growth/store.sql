@@ -6,20 +6,6 @@ WITH RECURSIVE tree AS (
     SELECT c.id, t.department, t.level1, CASE WHEN t.depth = 1 THEN c.name ELSE t.level2 END, t.depth + 1
     FROM store.categories c JOIN tree t ON c.parent_id = t.id
 ),
-fx_daily AS MATERIALIZED (
-    -- Postgres has no ASOF JOIN. Build one exchange rate per currency per calendar
-    -- day (weekends carry the last business day's rate), then join on (currency, day).
-    SELECT c.code AS currency_code, d::date AS day,
-           (SELECT f.units_per_usd
-              FROM store.fx_rates f
-             WHERE f.currency_code = c.code AND f.rate_date <= d::date
-             ORDER BY f.rate_date DESC
-             LIMIT 1) AS units_per_usd
-    FROM store.currencies c
-    CROSS JOIN generate_series((SELECT min(placed_at)::date FROM store.orders),
-                               (SELECT max(placed_at)::date FROM store.orders),
-                               interval '1 day') AS g(d)
-),
 monthly AS (
     SELECT t.department,
            date_trunc('month', o.placed_at)::date AS month,
@@ -28,7 +14,7 @@ monthly AS (
     JOIN store.order_items oi ON oi.order_id = o.id
     JOIN store.products pr ON pr.id = oi.product_id
     JOIN tree t ON t.id = pr.category_id
-    JOIN fx_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
+    JOIN store.fx_rates_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
     WHERE o.status <> 'cancelled' AND o.id <= @max_order_id
     GROUP BY 1, 2
 ),

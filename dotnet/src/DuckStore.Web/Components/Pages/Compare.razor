@@ -318,7 +318,7 @@
         var warehouse = c.Warehouse is { } w
             ? $"warehouse built {w.BuiltAt:yyyy-MM-dd HH:mm} UTC, {w.SizeBytes / 1e6:N0} MB, DuckDB {w.DuckDbVersion}, {w.Threads} threads"
             : "the analytics service is not reachable";
-        return $"Orders up to #{c.MaxOrderId:N0} ({warehouse}) · lookup customer #{c.CustomerId}";
+        return $"Orders up to #{c.MaxOrderId:N0} ({warehouse}) · lookup customer #{c.CustomerId} · {c.IndexesText}";
     }
 
     private CancellationToken NewRun()

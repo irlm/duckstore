@@ -6,27 +6,13 @@ WITH RECURSIVE chain AS (
     SELECT e.id, c.level + 1, c.path || ARRAY[e.id]
     FROM store.employees e JOIN chain c ON e.manager_id = c.employee_id
 ),
-fx_daily AS MATERIALIZED (
-    -- Postgres has no ASOF JOIN. Build one exchange rate per currency per calendar
-    -- day (weekends carry the last business day's rate), then join on (currency, day).
-    SELECT c.code AS currency_code, d::date AS day,
-           (SELECT f.units_per_usd
-              FROM store.fx_rates f
-             WHERE f.currency_code = c.code AND f.rate_date <= d::date
-             ORDER BY f.rate_date DESC
-             LIMIT 1) AS units_per_usd
-    FROM store.currencies c
-    CROSS JOIN generate_series((SELECT min(placed_at)::date FROM store.orders),
-                               (SELECT max(placed_at)::date FROM store.orders),
-                               interval '1 day') AS g(d)
-),
 customer_revenue AS (
     SELECT c.account_manager_id,
            sum(round((oi.unit_price * oi.quantity - oi.discount) / fx.units_per_usd, 2)::numeric(14, 2)) AS revenue
     FROM store.orders o
     JOIN store.order_items oi ON oi.order_id = o.id
     JOIN store.customers c ON c.id = o.customer_id
-    JOIN fx_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
+    JOIN store.fx_rates_daily fx ON fx.currency_code = o.currency_code AND fx.day = o.placed_at::date
     WHERE c.account_manager_id IS NOT NULL
       AND o.status <> 'cancelled'
       AND o.id <= @max_order_id

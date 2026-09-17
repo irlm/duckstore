@@ -47,6 +47,7 @@ public static class CompareCommand
         var context = await runner.PrepareAsync();
         Console.WriteLine($"Orders up to id {context.MaxOrderId:N0} (warehouse watermark), lookup customer {context.CustomerId}");
         Console.WriteLine($"Median of {options.Runs} run(s) after {options.Warmups} warm-up run(s), in ms. Engine = Postgres ÷ DuckDB, model = store ÷ star.");
+        Console.WriteLine(context.IndexesText);
         foreach (var approach in Enum.GetValues<Approach>())
         {
             if (context.Unavailable(approach) is { } why) Console.WriteLine($"Skipped {approach.Info().Name}: {why}");

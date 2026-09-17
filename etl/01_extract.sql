@@ -29,6 +29,9 @@ CREATE TABLE raw.currencies AS FROM pg.store.currencies;
 CREATE TABLE raw.countries AS FROM pg.store.countries;
 -- step: raw.fx_rates
 CREATE TABLE raw.fx_rates AS FROM pg.store.fx_rates ORDER BY currency_code, rate_date;
+
+-- step: raw.fx_rates_daily
+CREATE TABLE raw.fx_rates_daily AS FROM pg.store.fx_rates_daily ORDER BY currency_code, day;
 -- step: raw.employees
 CREATE TABLE raw.employees AS FROM pg.store.employees;
 -- step: raw.warehouses

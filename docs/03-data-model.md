@@ -2,13 +2,15 @@
 
 ## The store (Postgres, schema `store`)
 
-A normalized model for the application. Files: [01_tables.sql](../internal/pg/schema/01_tables.sql) and
-[02_constraints.sql](../internal/pg/schema/02_constraints.sql).
+A normalized model for the application. Files: [01_tables.sql](../internal/pg/schema/01_tables.sql),
+[02_constraints.sql](../internal/pg/schema/02_constraints.sql) and
+[03_fx_rates_daily.sql](../internal/pg/schema/03_fx_rates_daily.sql).
 
 ```mermaid
 erDiagram
     currencies ||--o{ countries : "used by"
     currencies ||--o{ fx_rates : "has daily"
+    currencies ||--o{ fx_rates_daily : "one rate per calendar day"
     countries ||--o{ customers : "lives in"
     countries ||--o{ warehouses : "located in"
     countries ||--o{ suppliers : "based in"
@@ -52,6 +54,7 @@ Relational features worth noticing:
 | Circular foreign keys | `warehouses.manager_employee_id` ↔ `employees.warehouse_id` |
 | Many-to-many with attributes | `product_suppliers` (cost, lead time, primary), `promotion_products` |
 | Composite primary keys | `order_items (order_id, line_no)`, `inventory (warehouse_id, product_id)`, `fx_rates (currency_code, rate_date)` |
+| A table built for the planner | `fx_rates_daily`: derived from `fx_rates` (weekends carry Friday's rate). Reports join it instead of computing the calendar in a CTE, because a CTE has no statistics and led Postgres to a 2.5× slower plan |
 | Composite foreign key | `returns (order_id, line_no)` → `order_items` |
 | Temporal table | `product_prices (valid_from, valid_to)`, with a filtered unique index allowing one open version per product |
 | Business rules as constraints | `CHECK (total = subtotal - discount + shipping_fee + tax)`, status lists, shipment state consistency |

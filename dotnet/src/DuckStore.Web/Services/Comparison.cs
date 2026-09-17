@@ -101,8 +101,13 @@ public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<Approa
 
 /// <param name="MaxOrderId">The warehouse watermark, so every approach counts the same orders.</param>
 /// <param name="PostgresStarMaxOrderId">The watermark of the star schema copy in Postgres (null = no copy).</param>
-public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId)
+/// <param name="PostgresAnalyticsIndexes">How many indexes of analytics/postgres-indexes.sql exist on the store tables.</param>
+public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId, int PostgresAnalyticsIndexes)
 {
+    public string IndexesText => PostgresAnalyticsIndexes == 0
+        ? "Postgres store tables without the analytics indexes (make docker-indexes)"
+        : $"Postgres store tables with {PostgresAnalyticsIndexes} analytics indexes (make docker-indexes-drop)";
+
     public bool PostgresStarReady => PostgresStarMaxOrderId == MaxOrderId;
 
     public string? Unavailable(Approach approach) => approach switch
@@ -159,7 +164,10 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
                 // no copy of the star schema in Postgres
             }
         }
-        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId);
+        await using var indexes = postgres.CreateCommand("SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'store' AND indexname LIKE 'analytics\\_%'");
+        var analyticsIndexes = (int)(await indexes.ExecuteScalarAsync(ct))!;
+
+        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId, analyticsIndexes);
     }
 
     /// <summary>

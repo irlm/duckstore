@@ -6,7 +6,7 @@ A learning project that answers one question with real code and real numbers:
 It is an online store built twice over the same data:
 
 - **The store** runs on **Postgres** (OLTP): browse products, fill a cart, check out, ship, cancel, return.
-  Every click is a small transaction on a normalized schema with 24 related tables.
+  Every click is a small transaction on a normalized schema with 25 related tables.
 - **The analytics** run on **DuckDB** (OLAP): an ETL copies Postgres into a star schema in a DuckDB file,
   and a dashboard asks big questions about millions of rows.
 
@@ -177,7 +177,7 @@ If `make up` says `permission denied ... docker.sock`, add yourself to the docke
 |---|---|
 | [DuckDB for SQL Server developers](docs/01-duckdb-for-sql-server-developers.md) | Types, syntax and concepts mapped from T-SQL |
 | [OLTP vs OLAP, and how this project shares data](docs/02-architecture.md) | Row vs column storage, DuckDB concurrency rules, the ETL design (watermark, build and swap), hybrid queries |
-| [The data model](docs/03-data-model.md) | The 24 store tables and the star schema, with diagrams |
+| [The data model](docs/03-data-model.md) | The 25 store tables and the star schema, with diagrams |
 | [lessons/](lessons/) | 12 SQL lessons, loadable in the SQL console |
 
 The SQL itself is meant to be read:

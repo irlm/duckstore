@@ -1,7 +1,7 @@
 SCALE ?= 1
 BIN   := bin/duckstore
 
-.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-compare docker-logs dotnet-star
+.PHONY: build up down reset seed etl run bench test dotnet-run dotnet-analytics dotnet-etl dotnet-test docker-up docker-seed docker-etl docker-star docker-indexes docker-indexes-drop docker-compare docker-logs dotnet-star
 
 ## build: compile the duckstore binary (CGO is required by DuckDB)
 build:
@@ -78,6 +78,14 @@ docker-etl:
 ## docker-star: copy the warehouse's star schema into Postgres (schema dw) for the Compare page's fourth approach
 docker-star:
 	docker compose run --rm --no-deps analytics star-to-postgres
+
+## docker-indexes: add covering indexes for the Compare questions to the Postgres store tables (analytics/postgres-indexes.sql)
+docker-indexes:
+	docker compose exec -T postgres psql -U store -d store -v ON_ERROR_STOP=1 -f - < analytics/postgres-indexes.sql
+
+## docker-indexes-drop: remove those indexes again, to measure without them
+docker-indexes-drop:
+	docker compose exec -T postgres psql -U store -d store -v ON_ERROR_STOP=1 -f - < analytics/postgres-indexes-drop.sql
 
 ## docker-compare: run every Compare question from the web container and print the timings
 docker-compare:

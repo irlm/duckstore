@@ -55,6 +55,11 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opt Options) error {
 	}); err != nil {
 		return err
 	}
+	if err := step("one exchange rate per currency per day (03_fx_rates_daily.sql)", func() error {
+		return pg.ApplySchemaFile(ctx, pool, "03_fx_rates_daily.sql")
+	}); err != nil {
+		return err
+	}
 	// VACUUM cannot run inside a multi-statement batch, so it is its own call.
 	if err := step("VACUUM ANALYZE (update planner statistics)", func() error {
 		_, err := pool.Exec(ctx, "VACUUM (ANALYZE)")
