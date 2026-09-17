@@ -193,6 +193,51 @@ Limits of this measurement: one machine, so the "network" is a Docker bridge, mu
 the containers share the same cores and memory; one user at a time; Postgres without partitioning or columnar
 storage.
 
+### Network latency
+
+Everything above ran with direct connections inside one Docker network, where a round trip costs well under 1 ms.
+In production the web app, Postgres and the analytics service are often on different machines. The **Network**
+setting (CLI: `--latency direct,0,1,5,25`) sends both paths through [Toxiproxy](https://github.com/Shopify/toxiproxy),
+a container that forwards the connections and adds a delay in each direction: 1 ms is like another server in the same
+data center, 5 ms another data center in the same city, 25 ms another region.
+
+Median of 5 runs after 1 warm-up run, star schema on both engines, scale 5. Every run is in
+[docs/results/compare-latency-scale5.csv](../docs/results/compare-latency-scale5.csv).
+
+| Question | Approach | Direct | Proxy, no delay | +1 ms each way | +5 ms each way | +25 ms each way |
+|---|---|---:|---:|---:|---:|---:|
+| One customer's latest orders (lookup) | Postgres · star | 0.3 ms | 0.3 ms | 2.6 ms | 10.9 ms | 51.0 ms |
+| | DuckDB · star | 4.9 ms | 5.4 ms | 6.7 ms | 14.7 ms | 55.6 ms |
+| Unusual days | Postgres · star | 190 ms | 190 ms | 190 ms | 197 ms | 231 ms |
+| | DuckDB · star | 8.1 ms | 7.6 ms | 9.8 ms | 18.5 ms | 59.0 ms |
+| Revenue by sales leader | Postgres · star | 833 ms | 833 ms | 817 ms | 823 ms | 852 ms |
+| | DuckDB · star | 149 ms | 148 ms | 147 ms | 153 ms | 191 ms |
+| Revenue per month | Postgres · star | 6.06 s | 5.91 s | 5.88 s | 5.79 s | 5.92 s |
+| | DuckDB · star | 272 ms | 280 ms | 275 ms | 277 ms | 321 ms |
+| All order lines of one day (4 MB) | Postgres · star | 100 ms | 103 ms | 101 ms | 110 ms | 146 ms |
+| | DuckDB · star | 179 ms | 174 ms | 183 ms | 185 ms | 232 ms |
+
+What the numbers say:
+
+- **One question costs one round trip.** A delay of N ms in each direction adds about 2 × N ms to every question,
+  on both engines and whatever the query does: +25 ms each way added 41-58 ms to everything above, except the two
+  slowest Postgres queries (0.8 s and 6 s), where it disappears in the run-to-run noise. The proxy itself adds no
+  measurable time.
+- **For lookups, the network decides.** Direct, Postgres answers the lookup 16× faster than the DuckDB service.
+  At +5 ms each way it is 10.9 ms vs 14.7 ms, and at +25 ms the two are almost equal: the database work is a
+  small part of the time.
+- **For analytics, the engine decides.** +25 ms each way is 1% of Postgres' 6 seconds for revenue per month, and
+  15% of DuckDB's 280 ms. DuckDB is still 18× faster.
+- **Round trips multiply.** These questions are one query each. A page that sends 20 separate queries pays 20
+  round trips: at +5 ms each way that is about 200 ms before any database work. Batch the queries, or keep chatty
+  code close to its database.
+- **Measure time until the first row, not only the total.** The page subtracts a round trip measured with
+  `SELECT 1` from Postgres' "until the first row" time. Without that, network delay would look like slow database work.
+
+Limits: Toxiproxy adds a delay but does not make the link slower or lose packets. TCP between the web app and the
+proxy is still local, so a 4 MB response does not pay the extra round trips a real long-distance connection needs
+while TCP grows its sending window. Over a real 25 ms link the large result would be slower than shown here.
+
 ### The same measurement in the terminal
 
 ```bash
