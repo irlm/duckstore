@@ -142,8 +142,9 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
       MSSQL_PID: Developer
-      # Leave room for Postgres, DuckDB and the desktop on a 28 GB laptop.
-      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-4096}
+      # Leave room for Postgres (3 GB) and DuckDB (6 GB) on a 28 GB laptop, but enough that
+      # the heavy store-table questions do not spill to tempdb: 4 GB was not enough.
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-5120}
       MSSQL_AGENT_ENABLED: "false"
       TZ: UTC
     # Port 51433 on the host so it does not clash with a local SQL Server on 1433.

@@ -39,6 +39,7 @@ public sealed class SqlServerLoader(DuckDbWarehouse warehouse, IConfiguration co
         var batchSize = DefaultBatchSize;
         var columnstore = true;
         var verifyOnly = false;
+        var maxMemoryMb = 5120;
         string? connectionString = null;
 
         for (var i = 0; i < args.Count; i++)
@@ -50,6 +51,7 @@ public sealed class SqlServerLoader(DuckDbWarehouse warehouse, IConfiguration co
                 case "--tables": only = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries); break;
                 case "--batch-size": batchSize = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
                 case "--no-columnstore": columnstore = false; break;
+                case "--max-memory-mb": maxMemoryMb = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
                 case "--verify": verifyOnly = true; break;
                 case "-h" or "--help": Usage(); return 0;
                 default: log.LogError("Unknown argument '{Arg}'.", args[i]); Usage(); return 1;
@@ -87,6 +89,10 @@ public sealed class SqlServerLoader(DuckDbWarehouse warehouse, IConfiguration co
         {
             await Execute(sql, $"IF SCHEMA_ID('{schema}') IS NULL EXEC('CREATE SCHEMA [{schema}]')", ct);
         }
+
+        // The memory budget first: it decides how much of the load and of every later query
+        // stays in memory.
+        await RunScriptAsync(sql, "Mssql.00_server.sql", ct, ("{{MAX_MEMORY_MB}}", maxMemoryMb.ToString(CultureInfo.InvariantCulture)));
 
         var total = System.Diagnostics.Stopwatch.StartNew();
         foreach (var (_, duckSchema, sqlSchema, table) in tables)
@@ -246,9 +252,10 @@ public sealed class SqlServerLoader(DuckDbWarehouse warehouse, IConfiguration co
 
     // ── keys, indexes, columnstore ────────────────────────────────────────────
 
-    private async Task RunScriptAsync(SqlConnection sql, string resource, CancellationToken ct)
+    private async Task RunScriptAsync(SqlConnection sql, string resource, CancellationToken ct, params (string Token, string Value)[] replacements)
     {
         var text = Resource(resource);
+        foreach (var (token, value) in replacements) text = text?.Replace(token, value, StringComparison.Ordinal);
         if (text is null)
         {
             log.LogWarning("No script {Resource} in the assembly.", resource);
@@ -359,6 +366,8 @@ public sealed class SqlServerLoader(DuckDbWarehouse warehouse, IConfiguration co
           --tables a,b        only these tables
           --batch-size N      rows per bulk-copy batch (default: 50,000)
           --no-columnstore    star facts as rowstore, to measure what columnstore is worth
+          --max-memory-mb N   SQL Server memory budget (default: 5120; the container ignores
+                              MSSQL_MEMORY_LIMIT_MB, so it is set with sp_configure)
           --verify            only compare row counts with the warehouse
         """);
 }
