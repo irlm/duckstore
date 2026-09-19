@@ -129,7 +129,12 @@ See `bench.conf.example`.
 - [Cold engine cache](../docs/results/bench-star-scale5-laptop-cold.md): emptying each engine's own buffer pool
   changes a big scan by less than 10%, but Postgres's lookup goes from 0.1 ms to 12.3 ms (123×) and DuckDB pays a
   20–30 ms start-up for every fresh process. The ranking does not move.
-- [Reports while the store is busy](../docs/results/loadtest-scale5-laptop-sqlserver.md): with reports on the store's
+- [Reports while the store is busy, every engine on its own cores](../docs/results/loadtest-scale5-laptop-separate-cores.md):
+  82 minutes, 5.7 million store operations, four scenarios taking turns, with enough samples to mean p99.99 (100
+  above it for product pages) and a confidence interval on every p99. Own cores almost remove the reports from the
+  store's p95; the tail still shows them (checkout p99 37.6 ms alone, 46.4 with DuckDB, 62.7 with SQL Server, 116.5
+  with reports on the store's own Postgres); and beyond p99.9 the numbers stop being about the database at all.
+- [The first, shorter version of that test](../docs/results/loadtest-scale5-laptop-sqlserver.md): with reports on the store's
   own Postgres, checkout p95 doubles and 14 reports finish in a minute; moved to SQL Server's columnstore it is 124
   reports and the store barely notices; moved to the DuckDB service it is 311 reports, the fastest answers, and a
   slightly busier store.

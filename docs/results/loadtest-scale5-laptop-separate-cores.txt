@@ -1,0 +1,56 @@
+Store traffic: 1200 operations/s (70% product page, 20% order history, 10% checkout), 300 s measured after 10 s warm-up.
+Reports: 2 users, questions brand-returns, active-customers, sales-hierarchy, unusual-days, monthly-revenue.
+Rounds: 4. The scenarios take turns and their samples are added together, so anything that drifts during 82 minutes hits all of them equally.
+
+Scenario: store only
+  operation            done failed   per s    p50 ms    p95 ms    p99 ms   p99.9 ms  p99.99 ms    max ms
+  product page    1,007,735      0   839.8       0.2       1.1       2.2      116.1      535.4     1,300
+  order history     288,492      0   240.4       0.0       0.4       1.3      118.5      482.0     1,094
+  checkout          143,829      0   119.9      14.8      22.4      37.6      209.8      586.7     1,252
+  p99 with a 95% confidence interval from the order statistics:
+  product page    p99       2.2 ms  [2.2 .. 2.2]  1,007,735 samples, 100 above p99.99
+  order history   p99       1.3 ms  [1.2 .. 1.3]  288,492 samples, 28 above p99.99
+  checkout        p99      37.6 ms  [36.7 .. 38.6]  143,829 samples, 14 above p99.99
+  (1638 checkouts found no stock and rolled back)
+
+Scenario: store + reports on Postgres
+  operation            done failed   per s    p50 ms    p95 ms    p99 ms   p99.9 ms  p99.99 ms    max ms
+  product page    1,008,051      0   840.0       1.0       5.2       9.9      171.3      540.0     1,578
+  order history     288,074      0   240.1       0.4       4.4       7.8      174.4      511.3     1,500
+  checkout          143,931      0   119.9      24.6      42.9     116.5      577.5      994.2     1,606
+  report                149      0     0.1  10,513.2  37,216.1  38,664.7   36,723.0          -    38,665
+  p99 with a 95% confidence interval from the order statistics:
+  product page    p99       9.9 ms  [9.7 .. 10.0]  1,008,051 samples, 100 above p99.99
+  order history   p99       7.8 ms  [7.7 .. 8.0]  288,074 samples, 28 above p99.99
+  checkout        p99     116.5 ms  [108.0 .. 126.6]  143,931 samples, 14 above p99.99
+  (1719 checkouts found no stock and rolled back)
+
+Scenario: store + reports on DuckDB service
+  operation            done failed   per s    p50 ms    p95 ms    p99 ms   p99.9 ms  p99.99 ms    max ms
+  product page    1,007,636      0   839.7       0.4       1.5       3.5      215.0      615.8     1,601
+  order history     288,494      0   240.4       0.0       0.8       2.3      198.4      599.6     1,525
+  checkout          143,926      0   119.9      16.1      25.2      46.4      323.4      817.6     1,616
+  report              2,108      0     1.8   1,233.0   1,847.3   2,043.5    2,096.4          -     2,157
+  p99 with a 95% confidence interval from the order statistics:
+  product page    p99       3.5 ms  [3.5 .. 3.6]  1,007,636 samples, 100 above p99.99
+  order history   p99       2.3 ms  [2.3 .. 2.4]  288,494 samples, 28 above p99.99
+  checkout        p99      46.4 ms  [44.0 .. 49.3]  143,926 samples, 14 above p99.99
+  (1803 checkouts found no stock and rolled back)
+
+Scenario: store + reports on SQL Server
+  operation            done failed   per s    p50 ms    p95 ms    p99 ms   p99.9 ms  p99.99 ms    max ms
+  product page    1,007,418      0   839.5       0.4       1.4       3.4      204.9      565.7     1,401
+  order history     288,185      0   240.2       0.0       0.7       2.4      201.8      648.3     1,312
+  checkout          144,453      0   120.4      16.4      26.3      62.7      317.6      603.0     1,515
+  report              1,122      0     0.9   1,530.8   5,676.7   6,235.7    6,408.2          -     6,408
+  p99 with a 95% confidence interval from the order statistics:
+  product page    p99       3.4 ms  [3.4 .. 3.5]  1,007,418 samples, 100 above p99.99
+  order history   p99       2.4 ms  [2.3 .. 2.4]  288,185 samples, 28 above p99.99
+  checkout        p99      62.7 ms  [57.1 .. 68.9]  144,453 samples, 14 above p99.99
+  (1880 checkouts found no stock and rolled back)
+
+p95 latency of the store, ms:
+  operation                               store only        store + reports on Postgres  store + reports on DuckDB service      store + reports on SQL Server
+  product page                                   1.1                                5.2                                1.5                                1.4
+  order history                                  0.4                                4.4                                0.8                                0.7
+  checkout                                      22.4                               42.9                               25.2                               26.3

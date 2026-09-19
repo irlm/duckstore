@@ -268,7 +268,11 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
                 {
                     concurrency.Release();
                 }
-                samples.Add((operation, due.TotalSeconds, (clock.Elapsed - due).TotalMilliseconds, ok));
+                // Latency counts from the scheduled start, not from when the operation really began,
+                // so waiting for a connection counts. Task.Delay can return a fraction of a
+                // millisecond early, and a sub-millisecond read then finishes before its slot: that
+                // is timer jitter, not negative latency, so it is clamped at zero.
+                samples.Add((operation, due.TotalSeconds, Math.Max(0, (clock.Elapsed - due).TotalMilliseconds), ok));
             }));
 
             if (i % options.Rate == 0)

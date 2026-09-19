@@ -541,8 +541,25 @@ What the numbers say:
 - **SQL Server disturbed the store least, DuckDB answered fastest.** DuckDB takes every core it can for one query,
   which is why its reports finish first and why the store notices it slightly more on a shared machine.
 
-Limits: one 60-second run per scenario; the load generator runs on the same machine; 100 operations per second is a
-small store; every scenario places about 600 orders, whose ids are above the warehouse watermark, so the Compare results
+**The same test, long enough to mean it** (2026-09-19, full write-up in
+[docs/results/loadtest-scale5-laptop-separate-cores.md](../docs/results/loadtest-scale5-laptop-separate-cores.md)):
+1,200 operations/s, four scenarios taking turns over four rounds, 82 minutes, **5.7 million store operations**, every
+engine on its own cores. Per scenario that is 1,007,000 product pages, 288,000 order histories and 144,000 checkouts
+— enough samples for p99.99 to be measured rather than guessed, and every p99 comes with a 95% confidence interval.
+
+| Store operation | Store only | + Postgres | + DuckDB service | + SQL Server |
+|---|---|---|---|---|
+| product page p95 / p99 | 1.1 / 2.2 | 5.2 / 9.9 | 1.5 / 3.5 | 1.4 / 3.4 |
+| checkout p95 / p99 | 22.4 / 37.6 | 42.9 / **116.5** | 25.2 / 46.4 | 26.3 / 62.7 |
+| reports in 20 min | | 149 (p50 10.5 s) | **2,108 (p50 1.2 s)** | 1,122 (p50 1.5 s) |
+
+Two lessons the short run could not show. **A good p95 can hide a bad p99**: with reports on the store's own
+Postgres the checkout p95 doubles but the p99 triples. And **past p99.9 the database stops being the story** — even
+with nothing else running, a product page with a p99 of 2.2 ms has a p99.9 of 116 ms and a p99.99 of 535 ms, the
+same in every scenario, which is the client's garbage collection and the scheduler, not Postgres.
+
+Limits: one 60-second run per scenario in the first test above; the load generator runs on the same machine; 100
+operations per second is a small store; every scenario places about 600 orders, whose ids are above the warehouse watermark, so the Compare results
 do not change. Analyze the raw data with DuckDB:
 
 ```sql
