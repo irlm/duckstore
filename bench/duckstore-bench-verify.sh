@@ -201,6 +201,14 @@ main() {
       ref_rows="$(wc -l < "${BENCH_TMP}/ref")"
       eng_rows="$(wc -l < "${BENCH_TMP}/eng")"
 
+      # An empty side almost always means the client was killed by --timeout, not that the
+      # engine answered nothing: say so instead of printing a diff of every row.
+      if [ "$eng_rows" -eq 0 ] && [ "$ref_rows" -gt 0 ]; then
+        err "$(printf '%-34s no answer from %s within %ss' "${id}.${model}" "$ENGINE" "$TIMEOUT")"
+        different=$((different + 1))
+        continue
+      fi
+
       if cmp -s "${BENCH_TMP}/ref" "${BENCH_TMP}/eng"; then
         ok "$(printf '%-34s %s rows, same answer' "${id}.${model}" "$ref_rows")"
         same=$((same + 1))
