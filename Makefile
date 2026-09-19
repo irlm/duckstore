@@ -154,3 +154,7 @@ bench-list:
 ## bench-local: run the benchmark on every engine this machine can run (ARGS="--yes --repeat 5")
 bench-local:
 	bash bench/duckstore-bench-local.sh $(ARGS)
+
+## bench-verify: do two engines answer the same? (ARGS="--engine mssql --model store")
+bench-verify:
+	bash bench/duckstore-bench-verify.sh $(ARGS)
