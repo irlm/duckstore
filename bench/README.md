@@ -108,11 +108,14 @@ See `bench.conf.example`.
 
 ## First results
 
-[docs/results/bench-star-scale5-laptop.md](../docs/results/bench-star-scale5-laptop.md): the 15 questions on the
-star schema, on one laptop, DuckDB vs SQL Server columnstore vs Postgres vs pg_duckdb, with every answer verified
-first. The short version: SQL Server's columnstore beats the same star schema in Postgres on 14 of 15 questions,
-DuckDB still wins 13 of 15 but by 2–5× rather than 10–90×, Postgres wins the lookup by a mile, and two T-SQL
-patterns (`COUNT(DISTINCT)` with `ROLLUP`, `PERCENTILE_CONT`) cost SQL Server dearly.
+- [Star schema, four engines](../docs/results/bench-star-scale5-laptop.md): SQL Server's columnstore beats the same
+  star schema in Postgres on 14 of 15 questions; DuckDB still wins 13 of 15, but by 2–5× rather than 10–90×;
+  Postgres wins the lookup by a mile; and two T-SQL patterns (`COUNT(DISTINCT)` with `ROLLUP`, `PERCENTILE_CONT`)
+  cost SQL Server dearly.
+- [Store tables, four engines](../docs/results/bench-store-scale5-laptop.md): DuckDB wins 13 of 15 and by a wider
+  margin, both row engines win the lookup, and SQL Server picks nested loops for the daily exchange-rate join —
+  84.8 s that becomes 5.6 s with `OPTION (HASH JOIN)`, which is the same class of mistake Postgres made here on the
+  same question.
 
 ## Reading the numbers
 
