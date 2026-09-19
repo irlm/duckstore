@@ -43,15 +43,62 @@ benchmarked with Postgres SQL.
 
 ## Running
 
+One command, and it first checks what this machine can do — SQL Server has no ARM build, the
+DuckDB CLI may be missing, Docker may not be usable by your user:
+
 ```bash
-# every question, both models, on the engine that owns this machine
+make bench-list                  # what this machine can run, and why not the rest
+make bench-local                 # pick from a menu, then run
+make bench-local ARGS="--yes --repeat 5"
+```
+
+```
+  engine          note
+  postgres   [x]  container duckstore-postgres
+  pgduckdb   [x]  extension installed
+  duckdb     [x]  warehouse volume, CLI in a container
+  mssql      [ ]  SQL Server has no build for aarch64: run it on a lab machine
+```
+
+One engine at a time, for a lab machine that owns it:
+
+```bash
 ./duckstore-bench-run.sh --engine postgres --sql-dir ./sql --repeat 3
 ./duckstore-bench-run.sh --engine duckdb   --sql-dir ./sql --duckdb-file /data/warehouse.duckdb
-./duckstore-bench-run.sh --engine pgduckdb --sql-dir ./sql --model store
+./duckstore-bench-run.sh --engine mssql    --sql-dir ./sql --mssql-host 127.0.0.1 --mssql-port 51433
 
 # what a query costs when nothing is cached (restarts Postgres, drops the page cache)
 ./duckstore-bench-run.sh --engine postgres --sql-dir ./sql --cold --repeat 2
 ```
+
+## Before timing: the same answer
+
+```bash
+./duckstore-bench-verify.sh --engine mssql            # against Postgres, every question
+./duckstore-bench-verify.sh --engine duckdb --model star
+```
+
+Each question runs on both engines, both results are normalised (spaces, the NULL word,
+decimals, timestamp formats) and compared line by line. A benchmark whose engines disagree is
+measuring different questions.
+
+## SQL Server
+
+```bash
+make docker-mssql            # SQL Server 2025 Developer, password written to .env
+make docker-mssql-load       # the warehouse copied in: rowstore store tables, columnstore star
+make docker-mssql-load ARGS="--no-columnstore"   # the same star schema as rowstore
+make docker-mssql-down       # stop it and get the memory back
+```
+
+The loader builds the tables from the warehouse's own schema, so a new ETL column needs no
+second definition, and gives each model the storage its engine is known for:
+
+| | store schema | dw schema |
+|---|---|---|
+| storage | rowstore | clustered columnstore on the facts |
+| keys | the same primary keys and indexes Postgres has | the dimension keys |
+| why | neither engine gets a head start on the application's tables | the feature a SQL Server team would use for reports |
 
 Passwords come from the environment or `/etc/lab-secrets.env` (mode 600), never from a flag: `PGPASSWORD`,
 `SQLCMDPASSWORD`, `LAB_SQL_SA_PASSWORD` for the cold runs on SQL Server.
@@ -102,7 +149,5 @@ bash tests/run-all.sh     # syntax, shellcheck, unit tests — no root, no datab
 
 ## Next
 
-- T-SQL for the 15 questions (`analytics/<id>/<model>.mssql.sql`) and a loader into SQL Server, with a clustered
-  columnstore on the star schema.
-- `duckstore-bench-verify.sh`: prove every engine returns the same answer before any timing is trusted.
 - A fleet runner for the mixed test: store traffic from one machine, reports from others, synchronised start.
+- The lab run: the same questions on lab machines, next to the TPC-H numbers (see `lab/`).

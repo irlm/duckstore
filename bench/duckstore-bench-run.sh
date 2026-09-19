@@ -30,6 +30,7 @@ SCALE="${BENCH_SCALE:-5}"
 REPEAT=3
 WARMUP=1
 COLD=0
+TIMEOUT="${BENCH_TIMEOUT:-1800}"
 OUT_FILE=""
 DRY_RUN=0
 
@@ -62,6 +63,7 @@ Usage: $0 --engine postgres|pgduckdb|duckdb|mssql [options]
   --repeat N            timed runs per question (default: ${REPEAT})
   --warmup N            runs discarded first (default: ${WARMUP})
   --cold                empty the caches before every timed run (one process per run)
+  --timeout N           give up on a question after N seconds (default: ${TIMEOUT}; 0 = no limit)
   --out FILE            append the TSV rows here (default: \$HOME/results-duckstore-<engine>-<stamp>.tsv)
   --host H --port N --db D --user U     Postgres/pg_duckdb connection (default: ${HOST}:${PORT}/${DB})
   --mssql-host H --mssql-port N --mssql-db D --mssql-user U
@@ -219,18 +221,20 @@ cold_prepare() {
 # execute FILE REPS — run the question REPS times in one process, print the raw output.
 execute() {
   local file="$1" reps="$2" client
+  local limit=()
+  [ "${TIMEOUT:-0}" -gt 0 ] && limit=(timeout "${TIMEOUT}s")
   case "$ENGINE" in
     duckdb)
       read -ra client <<< "$DUCKDB_CMD"
-      script_duckdb "$file" "$reps" | "${client[@]}" -readonly "$DUCKDB_FILE" 2>&1
+      script_duckdb "$file" "$reps" | "${limit[@]}" "${client[@]}" -readonly "$DUCKDB_FILE" 2>&1
       ;;
     postgres|pgduckdb)
       read -ra client <<< "$PSQL_CMD"
-      script_postgres "$file" "$reps" | "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t 2>&1
+      script_postgres "$file" "$reps" | "${limit[@]}" "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t 2>&1
       ;;
     mssql)
       read -ra client <<< "$SQLCMD_CMD"
-      script_mssql "$file" "$reps" | "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 2>&1
+      script_mssql "$file" "$reps" | "${limit[@]}" "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 2>&1
       ;;
   esac
 }
@@ -255,11 +259,18 @@ run_question() {
     for ((i = 0; i < REPEAT; i++)); do
       cold_prepare || die "${name}: could not empty the caches — refusing to report a warm run as cold."
       mapfile -t ms < <(execute "$file" 1 | parse_ms "$ENGINE")
-      [ "${#ms[@]}" -ge 1 ] || die "${name}: no timing in the engine's output."
+      if [ "${#ms[@]}" -lt 1 ]; then
+        warn "${name}: no answer within ${TIMEOUT}s (or the engine printed no timing) — skipped"
+        return 0
+      fi
       times+=("${ms[0]}")
     done
   else
     mapfile -t times < <(execute "$file" "$((WARMUP + REPEAT))" | parse_ms "$ENGINE")
+    if [ "${#times[@]}" -eq 0 ]; then
+      warn "${name}: no answer within ${TIMEOUT}s (or the engine printed no timing) — skipped"
+      return 0
+    fi
     if [ "${#times[@]}" -ne "$((WARMUP + REPEAT))" ]; then
       warn "${name}: expected $((WARMUP + REPEAT)) timings, got ${#times[@]} — check the question or the engine output"
     fi
@@ -284,6 +295,7 @@ main() {
       --repeat) REPEAT="${2:-}"; shift 2 ;;
       --warmup) WARMUP="${2:-}"; shift 2 ;;
       --cold) COLD=1; shift ;;
+      --timeout) TIMEOUT="${2:-}"; shift 2 ;;
       --out) OUT_FILE="${2:-}"; shift 2 ;;
       --host) HOST="${2:-}"; shift 2 ;;
       --port) PORT="${2:-}"; shift 2 ;;

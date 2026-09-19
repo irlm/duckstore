@@ -64,7 +64,9 @@ normalize() {
         v = $i
         gsub(/^[ \t\r]+|[ \t\r]+$/, "", v)
         if (v == "NULL" || v == "null") { v = "" }
-        else if (v ~ /^-?[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?$/) { v = sprintf("%.*f", d, v + 0) }
+        # sqlcmd prints .96 where psql prints 0.96, and pads trailing zeros, so a number is
+        # matched with or without the leading digit and always reprinted with d decimals.
+        else if (v ~ /^-?[0-9]*\.[0-9]+([eE][-+]?[0-9]+)?$/) { v = sprintf("%.*f", d, v + 0) }
         else if (v ~ /^-?[0-9]+$/) { v = v + 0 }
         else if (v ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) {
           sub(/T/, " ", v); sub(/\.[0-9]+$/, "", v); sub(/ 00:00:00$/, "", v)
@@ -147,14 +149,25 @@ main() {
   [ -n "$ENGINE" ] || { usage; die "--engine is required."; }
   [ "$ENGINE" != "$REFERENCE" ] || die "--engine and --reference are the same."
 
-  case "$REFERENCE" in postgres|pgduckdb) read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;; esac
-  case "$ENGINE" in
-    postgres|pgduckdb) read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;;
-    mssql) read_secret SQLCMDPASSWORD "SQL Server password for ${MSSQL_USER}"; export SQLCMDPASSWORD ;;
-  esac
+  # Both sides need their client and their password before anything runs: a missing client
+  # would otherwise look like an empty result, which reads as "the answers differ".
+  local side
+  for side in "$REFERENCE" "$ENGINE"; do
+    case "$side" in
+      duckdb) require_cmd "${DUCKDB_CMD%% *}" "install the DuckDB CLI, or set BENCH_DUCKDB_CMD" ;;
+      postgres|pgduckdb)
+        require_cmd "${PSQL_CMD%% *}" "apt install postgresql-client-18, or set BENCH_PSQL_CMD"
+        read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;;
+      mssql)
+        require_cmd "${SQLCMD_CMD%% *}" "install go-sqlcmd, or set BENCH_SQLCMD"
+        read_secret SQLCMDPASSWORD "SQL Server password for ${MSSQL_USER}"; export SQLCMDPASSWORD ;;
+      *) die "unknown engine ${side}" ;;
+    esac
+  done
 
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  # Not a local: the EXIT trap runs after main returns, when a local is already gone.
+  BENCH_TMP="$(mktemp -d)"
+  trap 'rm -rf "${BENCH_TMP:-}"' EXIT
 
   local model id same=0 different=0 missing=0
   for model in ${MODELS//,/ }; do
@@ -172,23 +185,23 @@ main() {
         continue
       fi
 
-      rows "$REFERENCE" "${ref_dir}/${id}.sql" | normalize "$DECIMALS" > "${tmp}/ref"
-      rows "$ENGINE" "${eng_dir}/${id}.sql" | normalize "$DECIMALS" > "${tmp}/eng"
+      rows "$REFERENCE" "${ref_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/ref"
+      rows "$ENGINE" "${eng_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/eng"
       if [ "$SORTED" -eq 1 ]; then
-        sort -o "${tmp}/ref" "${tmp}/ref"
-        sort -o "${tmp}/eng" "${tmp}/eng"
+        sort -o "${BENCH_TMP}/ref" "${BENCH_TMP}/ref"
+        sort -o "${BENCH_TMP}/eng" "${BENCH_TMP}/eng"
       fi
 
       local ref_rows eng_rows
-      ref_rows="$(wc -l < "${tmp}/ref")"
-      eng_rows="$(wc -l < "${tmp}/eng")"
+      ref_rows="$(wc -l < "${BENCH_TMP}/ref")"
+      eng_rows="$(wc -l < "${BENCH_TMP}/eng")"
 
-      if cmp -s "${tmp}/ref" "${tmp}/eng"; then
+      if cmp -s "${BENCH_TMP}/ref" "${BENCH_TMP}/eng"; then
         ok "$(printf '%-34s %s rows, same answer' "${id}.${model}" "$ref_rows")"
         same=$((same + 1))
       else
         err "$(printf '%-34s %s rows on %s, %s on %s' "${id}.${model}" "$ref_rows" "$REFERENCE" "$eng_rows" "$ENGINE")"
-        diff -u "${tmp}/ref" "${tmp}/eng" | sed -n "1,$((SHOW + 3))p" >&2 || true
+        diff -u "${BENCH_TMP}/ref" "${BENCH_TMP}/eng" | sed -n "1,$((SHOW + 3))p" >&2 || true
         different=$((different + 1))
       fi
     done < <(question_ids "$ref_dir" "$QUESTIONS")

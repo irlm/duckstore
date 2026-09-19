@@ -40,6 +40,10 @@ source_run() { source "$TARGET" || true; set +e; }
     echo "PASS: normalize must not hide a difference" >> "$RESULTS"
   fi
 
+  # sqlcmd prints .96 and pads zeros where psql prints 0.96
+  assert_eq "normalize reads a number without its leading zero" \
+    "$(printf 'x\t.960000000000\n' | normalize 2)" "$(printf 'x\t0.96\n' | normalize 2)"
+
   assert_eq "pg_duckdb reads the Postgres SQL folder" "$(dialect_dir pgduckdb)" "postgres"
   assert_eq "mssql has its own folder" "$(dialect_dir mssql)" "mssql"
 
