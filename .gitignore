@@ -19,3 +19,7 @@ dotnet/**/obj/
 
 # lab passwords and connection settings (see lab/SETUP.md)
 lab/lab.env
+
+# lab benchmark settings and exported SQL
+bench/bench.conf
+bench/sql/

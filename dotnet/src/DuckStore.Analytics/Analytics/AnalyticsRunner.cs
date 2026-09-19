@@ -21,7 +21,25 @@ public sealed partial class AnalyticsRunner(DuckDbWarehouse warehouse)
     {
         if (AnalyticCatalog.Find(id) is null) throw new KeyNotFoundException($"Unknown analytic '{id}'.");
         var sql = Library.For(id, model, "duckdb");
-        return model == DataModel.Store ? StoreSqlForDuckDb(sql) : sql;
+        // The store SQL is Postgres SQL, so it is rewritten — unless a store.duckdb.sql exists, which is already DuckDB's.
+        return model == DataModel.Store && !Library.Has(id, model, "duckdb") ? StoreSqlForDuckDb(sql) : sql;
+    }
+
+    /// <summary>The SQL any engine runs, for the benchmark exporter: DuckDB gets the rewritten store SQL,
+    /// every other engine gets its own file (analytics/&lt;id&gt;/&lt;model&gt;[.&lt;engine&gt;].sql).</summary>
+    public static string SqlFor(string id, DataModel model, string engine)
+    {
+        if (AnalyticCatalog.Find(id) is null) throw new KeyNotFoundException($"Unknown analytic '{id}'.");
+        return engine switch
+        {
+            "duckdb" => SqlFor(id, model),
+            "pgduckdb" or "postgres" => Library.For(id, model, "postgres"), // pg_duckdb: the same server, the same SQL
+            // Another dialect (SQL Server) must have its own file: falling back to the shared one would
+            // silently benchmark Postgres SQL.
+            _ => Library.Has(id, model, engine)
+                ? Library.For(id, model, engine)
+                : throw new KeyNotFoundException($"No {engine} SQL for '{id}' ({model.ToString().ToLowerInvariant()})."),
+        };
     }
 
     // The store SQL is written for Postgres. It runs unchanged on DuckDB's raw.* copy of the same

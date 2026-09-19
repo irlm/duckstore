@@ -47,6 +47,13 @@ switch (args)
         return;
     }
 
+    // `dotnet DuckStore.Analytics.dll export-sql --out dir`: write the Compare questions as ready-to-run
+    // .sql files per engine and data model, for the benchmark scripts in bench/.
+    case ["export-sql", .. var exportArgs]:
+        Environment.ExitCode = await SqlExporter.RunAsync(
+            app.Services.GetRequiredService<DuckDbWarehouse>(), exportArgs, app.Logger);
+        return;
+
     // `dotnet DuckStore.Analytics.dll compare-warehouses a.duckdb b.duckdb`: do two warehouse files hold the same data?
     case ["compare-warehouses", var a, var b]:
         Environment.ExitCode = await WarehouseComparer.RunAsync(a, b) ? 0 : 1;

@@ -1,0 +1,28 @@
+# bench.conf — host names and paths of your lab, sourced by bench/lib/common.sh.
+# Copy to bench.conf (git-ignored) and edit. Every value can also be set as an
+# environment variable or a flag; passwords never belong here.
+
+# Postgres / pg_duckdb
+BENCH_PG_HOST="${BENCH_PG_HOST:-127.0.0.1}"
+BENCH_PG_PORT="${BENCH_PG_PORT:-55432}"
+BENCH_PG_DB="${BENCH_PG_DB:-store}"
+BENCH_PG_USER="${BENCH_PG_USER:-store}"
+BENCH_PG_CONTAINER="${BENCH_PG_CONTAINER:-duckstore-postgres}"   # restarted by --cold
+
+# SQL Server
+BENCH_MSSQL_HOST="${BENCH_MSSQL_HOST:-}"
+BENCH_MSSQL_PORT="${BENCH_MSSQL_PORT:-1433}"
+BENCH_MSSQL_DB="${BENCH_MSSQL_DB:-duckstore}"
+BENCH_MSSQL_USER="${BENCH_MSSQL_USER:-duckstore}"
+
+# DuckDB
+BENCH_DUCKDB_FILE="${BENCH_DUCKDB_FILE:-/data/warehouse.duckdb}"
+BENCH_DUCKDB_THREADS="${BENCH_DUCKDB_THREADS:-}"
+BENCH_DUCKDB_MEMORY_MB="${BENCH_DUCKDB_MEMORY_MB:-}"
+
+# Where the exported SQL lives, and the scale label written to the results
+BENCH_SQL_DIR="${BENCH_SQL_DIR:-$(dirname "${BASH_SOURCE[0]}")/sql}"
+BENCH_SCALE="${BENCH_SCALE:-5}"
+
+# SSH: jump host for a lab subnet that is not routed from here
+BENCH_SSH_JUMP="${BENCH_SSH_JUMP:-}"

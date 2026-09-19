@@ -148,12 +148,22 @@ public sealed class AnalyticSqlLibrary
         }
     }
 
-    /// <param name="engine">"postgres" or "duckdb".</param>
+    /// <param name="engine">"postgres", "duckdb" or "mssql".</param>
+    /// <remarks>
+    /// analytics/&lt;id&gt;/&lt;model&gt;.&lt;engine&gt;.sql wins when it exists, otherwise the shared
+    /// &lt;model&gt;.sql. The store SQL is written for Postgres, so DuckDB rewrites it instead of
+    /// keeping its own copy; SQL Server needs its own files, because T-SQL differs.
+    /// </remarks>
     public string For(string id, DataModel model, string engine)
     {
-        if (model == DataModel.Store) return Get($"{id}/store.sql");
-        return _files.TryGetValue($"{id}/star.{engine}.sql", out var sql) ? sql : Get($"{id}/star.sql");
+        var name = Name(model);
+        return _files.TryGetValue($"{id}/{name}.{engine}.sql", out var sql) ? sql : Get($"{id}/{name}.sql");
     }
+
+    /// <summary>Is there SQL written for this engine, rather than the shared file?</summary>
+    public bool Has(string id, DataModel model, string engine) => _files.ContainsKey($"{id}/{Name(model)}.{engine}.sql");
+
+    private static string Name(DataModel model) => model == DataModel.Store ? "store" : "star";
 
     private string Get(string path) =>
         _files.TryGetValue(path, out var sql) ? sql : throw new KeyNotFoundException($"No SQL file analytics/{path}.");
