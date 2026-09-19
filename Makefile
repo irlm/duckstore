@@ -167,10 +167,18 @@ docker-mssql-tuning:
 docker-mssql-tuning-drop:
 	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-tuning-drop.sql
 
-## docker-mssql-star-tuning: order the columnstore by date and add a b-tree for the lookup (analytics/mssql-star-tuning.sql)
-docker-mssql-star-tuning:
-	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-tuning.sql
+## docker-mssql-star-index: a b-tree on the star facts, so lookups do not scan the columnstore
+docker-mssql-star-index:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-index.sql
 
-## docker-mssql-star-tuning-drop: back to a plain clustered columnstore
-docker-mssql-star-tuning-drop:
-	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-tuning-drop.sql
+## docker-mssql-star-index-drop: remove that b-tree again
+docker-mssql-star-index-drop:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-index-drop.sql
+
+## docker-mssql-star-ordered: rebuild the columnstore ordered by date (an experiment that did not pay off)
+docker-mssql-star-ordered:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-ordered.sql
+
+## docker-mssql-star-ordered-drop: back to a plain clustered columnstore
+docker-mssql-star-ordered-drop:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-ordered-drop.sql

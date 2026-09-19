@@ -1,0 +1,15 @@
+2026-09-19T19:27:29Z	reef	mssql	5	customer-orders.star	1	0
+2026-09-19T19:27:29Z	reef	mssql	5	customer-orders.star	2	0
+2026-09-19T19:27:29Z	reef	mssql	5	customer-orders.star	3	0
+2026-09-19T19:28:26Z	reef	mssql	5	delivery-percentiles.star	1	14219
+2026-09-19T19:28:26Z	reef	mssql	5	delivery-percentiles.star	2	14982
+2026-09-19T19:28:26Z	reef	mssql	5	delivery-percentiles.star	3	13462
+2026-09-19T19:28:32Z	reef	mssql	5	cohort-retention.star	1	1193
+2026-09-19T19:28:32Z	reef	mssql	5	cohort-retention.star	2	1389
+2026-09-19T19:28:32Z	reef	mssql	5	cohort-retention.star	3	1316
+2026-09-19T19:28:35Z	reef	mssql	5	rfm-segments.star	1	756
+2026-09-19T19:28:35Z	reef	mssql	5	rfm-segments.star	2	820
+2026-09-19T19:28:35Z	reef	mssql	5	rfm-segments.star	3	729
+2026-09-19T19:28:37Z	reef	mssql	5	brand-returns.star	1	434
+2026-09-19T19:28:37Z	reef	mssql	5	brand-returns.star	2	307
+2026-09-19T19:28:37Z	reef	mssql	5	brand-returns.star	3	306

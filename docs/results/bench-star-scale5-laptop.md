@@ -46,6 +46,45 @@ after this run. So this table is, if anything, generous to SQL Server.
 | top-products-per-department | **498** | 2,506 | 2,818 | 3,519 |
 | category-rollup | **2,841** | 84,280 | 22,245 | 8,580 |
 
+## Tuning SQL Server's star schema: one win, one experiment that failed
+
+Two things a DBA would try, each its own script, each with an undo — the same shape as the Postgres
+index experiment.
+
+**1. A b-tree next to the columnstore** ([analytics/mssql-star-index.sql](../../analytics/mssql-star-index.sql),
+`make docker-mssql-star-index`). A clustered columnstore has no index for "this customer's last 20 orders", so it
+scans. SQL Server allows a rowstore index on a columnstore table:
+
+| question | plain columnstore | with the b-tree | Postgres | DuckDB |
+|---|---:|---:|---:|---:|
+| customer-orders (lookup) | 61 | **under 1** | 0.1 | 6 |
+| delivery-percentiles | 12,353 | 14,219 | 13,391 | 305 |
+| cohort-retention | 1,198 | 1,316 | 23,670 | 439 |
+| rfm-segments | 908 | 756 | 13,681 | 442 |
+| brand-returns | 299 | 307 | 3,324 | 270 |
+
+The lookup goes from 61 ms to under a millisecond and nothing else changes: **one table can serve reports and
+lookups**. That is a real advantage of SQL Server over a DuckDB file here, which has no b-tree at all (6 ms).
+
+**2. An ordered columnstore** ([analytics/mssql-star-ordered.sql](../../analytics/mssql-star-ordered.sql),
+`make docker-mssql-star-ordered`). Sorting the facts by `order_date` during the rebuild should let date-filtered
+questions skip row groups. It did not:
+
+| question | plain | ordered by date | change |
+|---|---:|---:|---|
+| delivery-percentiles | 12,353 | 26,201 | 2.1× slower |
+| cohort-retention | 1,198 | 1,979 | 1.7× slower |
+| category-rollup | 84,280 | 99,571 | 1.2× slower |
+| clv-buckets | 210 | 273 | 1.3× slower |
+| top-products-per-department | 2,506 | 2,469 | unchanged |
+| monthly-revenue | 1,582 | 1,522 | unchanged |
+
+No question got measurably faster, several got slower, and the rebuild cost 2.5 minutes. The reason: the ETL loads
+the facts in order id order, which already follows the date closely, so there were no row groups left to skip — and
+the rebuild produced worse segments for the other columns. **ORDER is worth it when the load order and the filter
+column disagree; here they agreed.** Raw rows:
+[ordered](bench-star-scale5-laptop-mssql-ordered.tsv), [b-tree only](bench-star-scale5-laptop-mssql-index.tsv).
+
 ## What the numbers say
 
 **Columnstore is the competitor, not row storage.** SQL Server with a clustered columnstore beats the same star
