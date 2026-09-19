@@ -36,11 +36,13 @@
 </MudStack>
 
 <MudText Typo="Typo.body1" Class="mb-2" Style="max-width: 100ch">
-    Each question can run six ways: three <b>engines</b> on two <b>data models</b> (the normalized store tables, and the
+    Each question can run eight ways: four <b>engines</b> on two <b>data models</b> (the normalized store tables, and the
     star schema the ETL builds). <b>Postgres</b> runs the SQL with its own executor. <b>pg_duckdb</b> runs the same SQL in
     the same Postgres, but DuckDB's engine executes it, reading the Postgres tables. <b>DuckDB</b> runs it in the analytics
-    service, on its own column store file, and sends the rows back over HTTP as JSON. On the store tables all engines run
-    the <b>same SQL text</b>; on the same engine, store tables vs star schema shows what the data model is worth.
+    service, on its own column store file, and sends the rows back over HTTP as JSON. <b>SQL Server</b> runs its own T-SQL
+    on a copy of the same rows: rowstore store tables with the same indexes as Postgres, and a star schema with a clustered
+    columnstore index. Postgres, pg_duckdb and DuckDB share the <b>same SQL text</b> on the store tables; on the same
+    engine, store tables vs star schema shows what the data model is worth.
     Every approach counts the orders up to the warehouse watermark, and the page checks that all results are equal.
 </MudText>
 <MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
@@ -161,6 +163,16 @@
                 star schema @EngineEffect(measurement.Speedup(Approach.PostgresStar, Approach.DuckDbStar)).
                 <b>Data model</b> (same engine): on Postgres @ModelEffect(measurement.Speedup(Approach.PostgresStore, Approach.PostgresStar)),
                 on DuckDB @ModelEffect(measurement.Speedup(Approach.DuckDbStore, Approach.DuckDbStar)).
+                @if (measurement[Approach.SqlServerStore] is not null || measurement[Approach.SqlServerStar] is not null)
+                {
+                    <br />
+                    <span>
+                        <b>SQL Server vs Postgres</b> (same question, same data model): store tables
+                        @Faster("SQL Server", "Postgres", measurement.Speedup(Approach.PostgresStore, Approach.SqlServerStore)),
+                        star schema @Faster("SQL Server", "Postgres", measurement.Speedup(Approach.PostgresStar, Approach.SqlServerStar)).
+                        <b>vs DuckDB</b>: star schema @Faster("DuckDB", "SQL Server", measurement.Speedup(Approach.SqlServerStar, Approach.DuckDbStar)).
+                    </span>
+                }
                 @if (measurement[Approach.PgDuckDbStore] is not null)
                 {
                     <br />
