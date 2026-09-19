@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+#
+# duckstore-bench-verify.sh — do the engines give the same answer?
+#
+# A benchmark that has not proved this measures nothing in particular. Each question is run
+# on a reference engine and on another one, both results are normalised (spaces, NULL words,
+# decimals, timestamp formats) and compared line by line.
+#
+#   ./duckstore-bench-verify.sh --engine duckdb                  against Postgres, every question
+#   ./duckstore-bench-verify.sh --engine mssql --model star
+#   ./duckstore-bench-verify.sh --engine mssql --questions monthly-revenue --show 20
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "${SCRIPT_DIR}/lib/common.sh"
+
+REFERENCE="postgres"
+ENGINE=""
+MODELS="store,star"
+QUESTIONS=""
+SQL_DIR="${BENCH_SQL_DIR:-${SCRIPT_DIR}/sql}"
+DECIMALS=2
+SHOW=6
+SORTED=0
+
+HOST="${BENCH_PG_HOST:-127.0.0.1}"
+PORT="${BENCH_PG_PORT:-55432}"
+DB="${BENCH_PG_DB:-store}"
+USER_NAME="${BENCH_PG_USER:-store}"
+MSSQL_HOST="${BENCH_MSSQL_HOST:-127.0.0.1}"
+MSSQL_PORT="${BENCH_MSSQL_PORT:-51433}"
+MSSQL_DB="${BENCH_MSSQL_DB:-duckstore}"
+MSSQL_USER="${BENCH_MSSQL_USER:-sa}"
+DUCKDB_FILE="${BENCH_DUCKDB_FILE:-/data/warehouse.duckdb}"
+DUCKDB_CMD="${BENCH_DUCKDB_CMD:-duckdb}"
+PSQL_CMD="${BENCH_PSQL_CMD:-psql}"
+SQLCMD_CMD="${BENCH_SQLCMD:-sqlcmd}"
+
+usage() { cat <<EOF
+Usage: $0 --engine postgres|pgduckdb|duckdb|mssql [options]
+
+  --engine E            the engine to check
+  --reference E         what to compare against (default: ${REFERENCE})
+  --model store|star    data model, or both (default: ${MODELS})
+  --questions a,b       question ids (default: every exported question)
+  --sql-dir DIR         exported SQL root (default: ${SQL_DIR})
+  --decimals N          decimals kept when comparing numbers (default: ${DECIMALS})
+  --show N              differing lines to print (default: ${SHOW})
+  --sorted              compare the rows sorted, ignoring row order
+  -h, --help
+EOF
+}
+
+# ── pure helpers (unit-tested) ────────────────────────────────
+
+# normalize DECIMALS < rows — make two engines' output comparable: trim spaces, empty out the
+# NULL word, round numbers, drop trailing zeros of a timestamp and a midnight time.
+normalize() {
+  awk -F'\t' -v d="${1:-2}" 'BEGIN { OFS = "\t" }
+    {
+      for (i = 1; i <= NF; i++) {
+        v = $i
+        gsub(/^[ \t\r]+|[ \t\r]+$/, "", v)
+        if (v == "NULL" || v == "null") { v = "" }
+        else if (v ~ /^-?[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?$/) { v = sprintf("%.*f", d, v + 0) }
+        else if (v ~ /^-?[0-9]+$/) { v = v + 0 }
+        else if (v ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) {
+          sub(/T/, " ", v); sub(/\.[0-9]+$/, "", v); sub(/ 00:00:00$/, "", v)
+        }
+        else if (v == "true" || v == "t") { v = "1" }
+        else if (v == "false" || v == "f") { v = "0" }
+        $i = v
+      }
+      print
+    }'
+}
+
+# question_ids DIR LIST — ids to check, in order.
+question_ids() {
+  local dir="$1" list="${2:-}" q
+  if [ -z "$list" ]; then
+    find "$dir" -maxdepth 1 -name '*.sql' -type f 2>/dev/null | sed 's|.*/||; s|\.sql$||' | sort
+    return 0
+  fi
+  for q in ${list//,/ }; do printf '%s\n' "${q%.sql}"; done
+}
+
+# ── engines ───────────────────────────────────────────────────
+
+# rows ENGINE FILE — the result of one question as tab separated lines, no header.
+rows() {
+  local engine="$1" file="$2" client
+  case "$engine" in
+    duckdb)
+      read -ra client <<< "$DUCKDB_CMD"
+      { echo "SET TimeZone='UTC';"; echo ".mode list"; echo ".separator \"\t\""; echo ".headers off"; cat "$file"; echo ";"; } \
+        | "${client[@]}" -readonly "$DUCKDB_FILE" 2>/dev/null
+      ;;
+    postgres|pgduckdb)
+      read -ra client <<< "$PSQL_CMD"
+      { [ "$engine" = "pgduckdb" ] && echo "SET duckdb.force_execution = true;"; cat "$file"; echo ";"; } \
+        | "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t -F $'\t' 2>/dev/null
+      ;;
+    mssql)
+      read -ra client <<< "$SQLCMD_CMD"
+      { echo "SET NOCOUNT ON;"; echo "GO"; cat "$file"; echo ";"; echo "GO"; } \
+        | "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 -W -s $'\t' 2>/dev/null
+      ;;
+    *) die "unknown engine ${engine}" ;;
+  esac
+}
+
+dialect_dir() {
+  case "$1" in
+    pgduckdb) printf 'postgres' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+main() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --engine) ENGINE="${2:-}"; shift 2 ;;
+      --reference) REFERENCE="${2:-}"; shift 2 ;;
+      --model|--models) MODELS="${2:-}"; shift 2 ;;
+      --questions) QUESTIONS="${2:-}"; shift 2 ;;
+      --sql-dir) SQL_DIR="${2:-}"; shift 2 ;;
+      --decimals) DECIMALS="${2:-}"; shift 2 ;;
+      --show) SHOW="${2:-}"; shift 2 ;;
+      --sorted) SORTED=1; shift ;;
+      --host) HOST="${2:-}"; shift 2 ;;
+      --port) PORT="${2:-}"; shift 2 ;;
+      --db) DB="${2:-}"; shift 2 ;;
+      --user) USER_NAME="${2:-}"; shift 2 ;;
+      --mssql-host) MSSQL_HOST="${2:-}"; shift 2 ;;
+      --mssql-port) MSSQL_PORT="${2:-}"; shift 2 ;;
+      --mssql-db) MSSQL_DB="${2:-}"; shift 2 ;;
+      --mssql-user) MSSQL_USER="${2:-}"; shift 2 ;;
+      --duckdb-file) DUCKDB_FILE="${2:-}"; shift 2 ;;
+      -h|--help) usage; return 0 ;;
+      *) usage; die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [ -n "$ENGINE" ] || { usage; die "--engine is required."; }
+  [ "$ENGINE" != "$REFERENCE" ] || die "--engine and --reference are the same."
+
+  case "$REFERENCE" in postgres|pgduckdb) read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;; esac
+  case "$ENGINE" in
+    postgres|pgduckdb) read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;;
+    mssql) read_secret SQLCMDPASSWORD "SQL Server password for ${MSSQL_USER}"; export SQLCMDPASSWORD ;;
+  esac
+
+  local tmp; tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  local model id same=0 different=0 missing=0
+  for model in ${MODELS//,/ }; do
+    local ref_dir eng_dir
+    ref_dir="${SQL_DIR}/$(dialect_dir "$REFERENCE")/${model}"
+    eng_dir="${SQL_DIR}/$(dialect_dir "$ENGINE")/${model}"
+    [ -d "$ref_dir" ] || { warn "no ${model} SQL for ${REFERENCE}"; continue; }
+    hdr "${ENGINE} vs ${REFERENCE}, ${model} model"
+
+    while read -r id; do
+      [ -n "$id" ] || continue
+      if [ ! -f "${eng_dir}/${id}.sql" ]; then
+        warn "$(printf '%-34s no SQL for %s' "$id" "$ENGINE")"
+        missing=$((missing + 1))
+        continue
+      fi
+
+      rows "$REFERENCE" "${ref_dir}/${id}.sql" | normalize "$DECIMALS" > "${tmp}/ref"
+      rows "$ENGINE" "${eng_dir}/${id}.sql" | normalize "$DECIMALS" > "${tmp}/eng"
+      if [ "$SORTED" -eq 1 ]; then
+        sort -o "${tmp}/ref" "${tmp}/ref"
+        sort -o "${tmp}/eng" "${tmp}/eng"
+      fi
+
+      local ref_rows eng_rows
+      ref_rows="$(wc -l < "${tmp}/ref")"
+      eng_rows="$(wc -l < "${tmp}/eng")"
+
+      if cmp -s "${tmp}/ref" "${tmp}/eng"; then
+        ok "$(printf '%-34s %s rows, same answer' "${id}.${model}" "$ref_rows")"
+        same=$((same + 1))
+      else
+        err "$(printf '%-34s %s rows on %s, %s on %s' "${id}.${model}" "$ref_rows" "$REFERENCE" "$eng_rows" "$ENGINE")"
+        diff -u "${tmp}/ref" "${tmp}/eng" | sed -n "1,$((SHOW + 3))p" >&2 || true
+        different=$((different + 1))
+      fi
+    done < <(question_ids "$ref_dir" "$QUESTIONS")
+  done
+
+  echo >&2
+  if [ "$different" -eq 0 ] && [ "$same" -gt 0 ]; then
+    ok "${same} questions match${missing:+, ${missing} without SQL}"
+    return 0
+  fi
+  err "${different} of $((same + different)) questions differ${missing:+, ${missing} without SQL}"
+  return 1
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"

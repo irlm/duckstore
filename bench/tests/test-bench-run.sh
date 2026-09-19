@@ -96,7 +96,7 @@ EOF
 # ── static checks ─────────────────────────────────────────────
 src="$(cat "$TARGET")"
 assert_match "source-guarded, so tests can source it" "$src" '\[\[ "\$\{BASH_SOURCE\[0\]\}" == "\$0" \]\] && main'
-assert_match "opens duckdb read-only" "$src" 'duckdb -readonly'
+assert_match "opens duckdb read-only" "$src" '\$\{client\[@\]\}" -readonly'
 assert_match "refuses a cold run it could not make cold" "$src" 'refusing to report a warm run as cold'
 assert_eq "no password on any command line" "$(printf '%s' "$src" | grep -cE '(sqlcmd|psql)[^|]*-(P|-password)[= ]')" "0"
 

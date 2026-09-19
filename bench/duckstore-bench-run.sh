@@ -45,6 +45,11 @@ DUCKDB_FILE="${BENCH_DUCKDB_FILE:-/data/warehouse.duckdb}"
 DUCKDB_THREADS="${BENCH_DUCKDB_THREADS:-}"
 DUCKDB_MEMORY_MB="${BENCH_DUCKDB_MEMORY_MB:-}"
 PG_CONTAINER="${BENCH_PG_CONTAINER:-duckstore-postgres}"
+# The clients. Each may be more than one word, so the same script works with a CLI on the
+# PATH or one inside a container, e.g. BENCH_DUCKDB_CMD="docker run --rm -i -v duckstore_warehouse:/data duckstore-duckdb".
+DUCKDB_CMD="${BENCH_DUCKDB_CMD:-duckdb}"
+PSQL_CMD="${BENCH_PSQL_CMD:-psql}"
+SQLCMD_CMD="${BENCH_SQLCMD:-sqlcmd}"
 
 usage() { cat <<EOF
 Usage: $0 --engine postgres|pgduckdb|duckdb|mssql [options]
@@ -213,16 +218,19 @@ cold_prepare() {
 
 # execute FILE REPS — run the question REPS times in one process, print the raw output.
 execute() {
-  local file="$1" reps="$2"
+  local file="$1" reps="$2" client
   case "$ENGINE" in
     duckdb)
-      script_duckdb "$file" "$reps" | duckdb -readonly "$DUCKDB_FILE" 2>&1
+      read -ra client <<< "$DUCKDB_CMD"
+      script_duckdb "$file" "$reps" | "${client[@]}" -readonly "$DUCKDB_FILE" 2>&1
       ;;
     postgres|pgduckdb)
-      script_postgres "$file" "$reps" | psql -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t 2>&1
+      read -ra client <<< "$PSQL_CMD"
+      script_postgres "$file" "$reps" | "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t 2>&1
       ;;
     mssql)
-      script_mssql "$file" "$reps" | sqlcmd -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 2>&1
+      read -ra client <<< "$SQLCMD_CMD"
+      script_mssql "$file" "$reps" | "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 2>&1
       ;;
   esac
 }
@@ -300,9 +308,9 @@ main() {
   [ -d "$SQL_DIR/$dialect" ] || die "No exported SQL in ${SQL_DIR}/${dialect} — run export-sql first (see the header of this script)."
 
   case "$ENGINE" in
-    duckdb) require_cmd duckdb "apt install duckdb, or download the CLI" ;;
-    postgres|pgduckdb) require_cmd psql "apt install postgresql-client-18"; read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;;
-    mssql) require_cmd sqlcmd "install go-sqlcmd"; [ -n "$MSSQL_HOST" ] || die "--mssql-host is required."
+    duckdb) require_cmd "${DUCKDB_CMD%% *}" "install the DuckDB CLI, or set BENCH_DUCKDB_CMD" ;;
+    postgres|pgduckdb) require_cmd "${PSQL_CMD%% *}" "apt install postgresql-client-18, or set BENCH_PSQL_CMD"; read_secret PGPASSWORD "Postgres password for ${USER_NAME}"; export PGPASSWORD ;;
+    mssql) require_cmd "${SQLCMD_CMD%% *}" "install go-sqlcmd, or set BENCH_SQLCMD"; [ -n "$MSSQL_HOST" ] || die "--mssql-host is required."
            read_secret SQLCMDPASSWORD "SQL Server password for ${MSSQL_USER}"; export SQLCMDPASSWORD ;;
   esac
 

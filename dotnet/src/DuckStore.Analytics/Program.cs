@@ -54,6 +54,12 @@ switch (args)
             app.Services.GetRequiredService<DuckDbWarehouse>(), exportArgs, app.Logger);
         return;
 
+    // `dotnet DuckStore.Analytics.dll mssql-load`: copy the warehouse into SQL Server (store tables
+    // as rowstore with the same indexes as Postgres, star schema with a clustered columnstore).
+    case ["mssql-load", .. var mssqlArgs]:
+        Environment.ExitCode = await ActivatorUtilities.CreateInstance<SqlServerLoader>(app.Services).RunAsync(mssqlArgs);
+        return;
+
     // `dotnet DuckStore.Analytics.dll compare-warehouses a.duckdb b.duckdb`: do two warehouse files hold the same data?
     case ["compare-warehouses", var a, var b]:
         Environment.ExitCode = await WarehouseComparer.RunAsync(a, b) ? 0 : 1;

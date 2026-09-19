@@ -1,0 +1,4 @@
+SELECT TOP (20) order_id, placed_at, status, line_count, total_usd
+FROM dw.fact_orders
+WHERE customer_id = @customer_id
+ORDER BY placed_at DESC, order_id DESC

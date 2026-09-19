@@ -120,3 +120,37 @@ docker-compare:
 ## docker-logs: follow the logs of the analytics and web containers
 docker-logs:
 	docker compose logs -f analytics web
+
+## docker-mssql: start SQL Server 2025 Developer (writes a password into .env the first time)
+docker-mssql:
+	@grep -q '^MSSQL_SA_PASSWORD=' .env 2>/dev/null || { \
+	  umask 077; \
+	  printf 'MSSQL_SA_PASSWORD=%s\n' "$$(openssl rand -base64 18 | tr -d '/+=')Aa1!" >> .env; \
+	  echo "wrote a new MSSQL_SA_PASSWORD to .env"; }
+	docker compose --profile mssql up -d --wait mssql
+
+## docker-mssql-load: copy the warehouse into SQL Server (rowstore store tables, columnstore star)
+docker-mssql-load:
+	docker compose run --rm --no-deps analytics mssql-load $(ARGS)
+
+## docker-mssql-down: stop SQL Server and free its memory
+docker-mssql-down:
+	docker compose --profile mssql stop mssql
+
+## docker-duckdb-cli: build the DuckDB command line tool as an image, for machines without it
+docker-duckdb-cli:
+	docker build -f docker/duckdb.Dockerfile -t duckstore-duckdb .
+
+## docker-export-sql: write the questions as ready-to-run SQL into bench/sql
+docker-export-sql:
+	docker compose run --rm --no-deps analytics export-sql --out /data/bench-sql --engines postgres,duckdb,mssql
+	rm -rf bench/sql && mkdir -p bench/sql
+	docker cp duckstore-analytics:/data/bench-sql/. bench/sql/
+
+## bench-list: what engines this machine can benchmark right now, and why not the others
+bench-list:
+	bash bench/duckstore-bench-local.sh --list
+
+## bench-local: run the benchmark on every engine this machine can run (ARGS="--yes --repeat 5")
+bench-local:
+	bash bench/duckstore-bench-local.sh $(ARGS)

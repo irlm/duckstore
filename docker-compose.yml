@@ -89,6 +89,8 @@ services:
       # Host=postgres: containers find each other by service name. GSS (Kerberos)
       # encryption is off because the image has no Kerberos library to load.
       ConnectionStrings__Store: Host=postgres;Port=5432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
+      # SQL Server as the load target of `mssql-load` (only useful with the mssql profile up).
+      ConnectionStrings__SqlServer: Server=mssql,1433;Database=duckstore;User Id=sa;Password=${MSSQL_SA_PASSWORD:-};TrustServerCertificate=True;Encrypt=False
       # Postgres runs on the same machine, so DuckDB must not take 80% of the RAM.
       Warehouse__MemoryLimit: 6GB
       # Build the warehouse when the volume has no file yet (needs seeded data).
@@ -125,6 +127,37 @@ services:
       toxiproxy:
         condition: service_started
 
+  # SQL Server, the engine most teams already have: the benchmark's third engine, with a
+  # clustered columnstore on the star schema. Started only when asked for, because it wants
+  # its own memory next to Postgres (3 GB) and DuckDB (6 GB):
+  #   make docker-mssql       start it and wait
+  #   make docker-mssql-load  copy the warehouse into it
+  # MSSQL_SA_PASSWORD comes from .env (git-ignored); `make docker-mssql` writes one if there
+  # is none. Developer edition is free and has every Enterprise feature.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    container_name: duckstore-mssql
+    profiles: [mssql]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+      MSSQL_PID: Developer
+      # Leave room for Postgres, DuckDB and the desktop on a 28 GB laptop.
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-4096}
+      MSSQL_AGENT_ENABLED: "false"
+      TZ: UTC
+    # Port 51433 on the host so it does not clash with a local SQL Server on 1433.
+    ports:
+      - "127.0.0.1:51433:1433"
+    volumes:
+      - mssqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   # Forwards TCP connections and can slow them down on purpose (Shopify's Toxiproxy).
   # The web app creates two proxies through its API and sets their delay:
   #   toxiproxy:15432 -> postgres:5432      toxiproxy:18080 -> analytics:8080
@@ -138,3 +171,4 @@ services:
 volumes:
   pgdata:
   warehouse:
+  mssqldata:
