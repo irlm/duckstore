@@ -99,6 +99,7 @@ assert_match "source-guarded, so tests can source it" "$src" '\[\[ "\$\{BASH_SOU
 assert_match "opens duckdb read-only" "$src" '\$\{client\[@\]\}" -readonly'
 assert_match "refuses a cold run it could not make cold" "$src" 'refusing to report a warm run as cold'
 assert_match "gives up on a question that never answers" "$src" 'timeout "\$\{TIMEOUT\}s"'
+assert_match "the question loop keeps its stdin" "$src" 'run_question "\$file" "\$model" < /dev/null'
 assert_eq "no password on any command line" "$(printf '%s' "$src" | grep -cE '(sqlcmd|psql)[^|]*-(P|-password)[= ]')" "0"
 
 # ── report ────────────────────────────────────────────────────

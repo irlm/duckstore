@@ -363,7 +363,9 @@ main() {
     hdr "${ENGINE}, ${model} model$([ "$COLD" -eq 1 ] && { [ "$COLD_OS" -eq 1 ] && echo ', cold cache' || echo ', cold engine cache (OS cache warm)'; })"
     while read -r file; do
       [ -f "$file" ] || { warn "missing $file"; continue; }
-      run_question "$file" "$model"
+      # < /dev/null: the question list is this loop's stdin, and a client run inside
+      # (docker exec -i, sqlcmd) would otherwise eat it and end the run after one question.
+      run_question "$file" "$model" < /dev/null
       count=$((count + 1))
     done < <(query_files "$dir" "$QUESTIONS")
   done
