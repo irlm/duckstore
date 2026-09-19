@@ -30,6 +30,7 @@ SCALE="${BENCH_SCALE:-5}"
 REPEAT=3
 WARMUP=1
 COLD=0
+COLD_OS=1
 TIMEOUT="${BENCH_TIMEOUT:-1800}"
 OUT_FILE=""
 DRY_RUN=0
@@ -62,7 +63,11 @@ Usage: $0 --engine postgres|pgduckdb|duckdb|mssql [options]
   --scale N             scale label written to the results (default: ${SCALE})
   --repeat N            timed runs per question (default: ${REPEAT})
   --warmup N            runs discarded first (default: ${WARMUP})
-  --cold                empty the caches before every timed run (one process per run)
+  --cold                empty every cache before each timed run: the engine's own and the
+                        operating system's page cache (the latter needs passwordless sudo)
+  --cold-engine         empty only the engine's own cache (Postgres restart, SQL Server DBCC,
+                        a fresh DuckDB process). The OS page cache stays warm, so this measures
+                        the engine's buffer pool, not the disk. Say so when reporting it.
   --timeout N           give up on a question after N seconds (default: ${TIMEOUT}; 0 = no limit)
   --out FILE            append the TSV rows here (default: \$HOME/results-duckstore-<engine>-<stamp>.tsv)
   --host H --port N --db D --user U     Postgres/pg_duckdb connection (default: ${HOST}:${PORT}/${DB})
@@ -185,10 +190,18 @@ script_mssql() {
   for ((i = 0; i < reps; i++)); do query_text "$file"; echo "GO"; done
 }
 
-# drop_os_cache — needs passwordless sudo; returns non-zero when it cannot.
+# drop_os_cache — needs passwordless sudo; returns non-zero when it cannot. With --cold-engine
+# it is skipped on purpose.
 drop_os_cache() {
+  [ "${COLD_OS:-1}" -eq 1 ] || return 0
   sync
   sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null
+}
+
+# docker_run ARGS... — docker without sudo when the user is in the docker group, with sudo -n
+# otherwise. Restarting a container does not need root when the socket is readable.
+docker_run() {
+  if docker info >/dev/null 2>&1; then docker "$@"; else sudo -n docker "$@"; fi
 }
 
 # cold_prepare — empty every cache this engine reads through. A run that cannot do
@@ -200,17 +213,26 @@ cold_prepare() {
       ;;
     postgres|pgduckdb)
       # Dropping the OS cache is not enough: shared_buffers keeps the data one layer up.
-      sudo -n docker restart "$PG_CONTAINER" >/dev/null 2>&1 || return 1
+      docker_run restart "$PG_CONTAINER" >/dev/null 2>&1 || return 1
       local i
       for ((i = 0; i < 60; i++)); do
-        sudo -n docker exec "$PG_CONTAINER" pg_isready -q >/dev/null 2>&1 && break
+        docker_run exec "$PG_CONTAINER" pg_isready -q >/dev/null 2>&1 && break
         sleep 1
       done
       drop_os_cache || return 1
       ;;
     mssql)
-      read_secret LAB_SQL_SA_PASSWORD "SQL Server sa password"
-      SQLCMDPASSWORD="$LAB_SQL_SA_PASSWORD" sqlcmd -S "${MSSQL_HOST},${MSSQL_PORT}" -U sa -d "$MSSQL_DB" -C -b \
+      # DBCC DROPCLEANBUFFERS is sysadmin only. When the benchmark already connects as sa there is
+      # nothing more to ask for; otherwise the sa password has to come from the environment.
+      local client sa_password
+      read -ra client <<< "$SQLCMD_CMD"
+      if [ "$MSSQL_USER" = "sa" ]; then
+        sa_password="$SQLCMDPASSWORD"
+      else
+        read_secret LAB_SQL_SA_PASSWORD "SQL Server sa password"
+        sa_password="$LAB_SQL_SA_PASSWORD"
+      fi
+      SQLCMDPASSWORD="$sa_password" "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U sa -d "$MSSQL_DB" -C -b \
         -Q "CHECKPOINT; DBCC DROPCLEANBUFFERS WITH NO_INFOMSGS; DBCC FREEPROCCACHE WITH NO_INFOMSGS;" >/dev/null 2>&1 || return 1
       ;;
     *) return 1 ;;
@@ -294,7 +316,8 @@ main() {
       --scale) SCALE="${2:-}"; shift 2 ;;
       --repeat) REPEAT="${2:-}"; shift 2 ;;
       --warmup) WARMUP="${2:-}"; shift 2 ;;
-      --cold) COLD=1; shift ;;
+      --cold) COLD=1; COLD_OS=1; shift ;;
+      --cold-engine) COLD=1; COLD_OS=0; shift ;;
       --timeout) TIMEOUT="${2:-}"; shift 2 ;;
       --out) OUT_FILE="${2:-}"; shift 2 ;;
       --host) HOST="${2:-}"; shift 2 ;;
@@ -337,7 +360,7 @@ main() {
   for model in ${MODELS//,/ }; do
     local dir="${SQL_DIR}/${dialect}/${model}"
     [ -d "$dir" ] || { warn "no ${model} SQL for ${ENGINE} in ${dir}"; continue; }
-    hdr "${ENGINE}, ${model} model$([ "$COLD" -eq 1 ] && echo ', cold cache')"
+    hdr "${ENGINE}, ${model} model$([ "$COLD" -eq 1 ] && { [ "$COLD_OS" -eq 1 ] && echo ', cold cache' || echo ', cold engine cache (OS cache warm)'; })"
     while read -r file; do
       [ -f "$file" ] || { warn "missing $file"; continue; }
       run_question "$file" "$model"

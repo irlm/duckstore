@@ -23,7 +23,7 @@ MODELS="store,star"
 REPEAT=3
 WARMUP=1
 SCALE="${BENCH_SCALE:-5}"
-COLD=0
+COLD=""
 TIMEOUT="${BENCH_TIMEOUT:-1800}"
 LIST_ONLY=0
 ASSUME_YES=0
@@ -45,7 +45,8 @@ Usage: $0 [options]
   --repeat N          timed runs per question (default: ${REPEAT})
   --warmup N          discarded runs (default: ${WARMUP})
   --scale N           scale label for the results (default: ${SCALE})
-  --cold              empty caches before every timed run
+  --cold              empty every cache before each timed run (needs passwordless sudo)
+  --cold-engine       empty only each engine's own cache (works without root)
   --timeout N         give up on a question after N seconds (default: ${TIMEOUT})
   --skip-export       reuse the SQL already in ${SQL_DIR}
   --yes               do not ask, run everything available
@@ -227,7 +228,7 @@ run_engine() {
   local engine="$1" args=()
   args+=(--engine "$engine" --sql-dir "$SQL_DIR" --model "$MODELS" --scale "$SCALE" --repeat "$REPEAT" --warmup "$WARMUP" --timeout "$TIMEOUT" --out "$OUT_FILE")
   [ -n "$QUESTIONS" ] && args+=(--questions "$QUESTIONS")
-  [ "$COLD" -eq 1 ] && args+=(--cold)
+  [ -n "$COLD" ] && args+=("$COLD")
   case "$engine" in
     postgres|pgduckdb) args+=(--host "${BENCH_PG_HOST}" --port "${BENCH_PG_PORT}" --db "${BENCH_PG_DB:-store}" --user "${BENCH_PG_USER:-store}") ;;
     duckdb) args+=(--duckdb-file "${BENCH_DUCKDB_FILE}") ;;
@@ -272,7 +273,8 @@ main() {
       --repeat) REPEAT="${2:-}"; shift 2 ;;
       --warmup) WARMUP="${2:-}"; shift 2 ;;
       --scale) SCALE="${2:-}"; shift 2 ;;
-      --cold) COLD=1; shift ;;
+      --cold) COLD="--cold"; shift ;;
+      --cold-engine) COLD="--cold-engine"; shift ;;
       --timeout) TIMEOUT="${2:-}"; shift 2 ;;
       --skip-export) SKIP_EXPORT=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
