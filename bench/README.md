@@ -69,7 +69,15 @@ One engine at a time, for a lab machine that owns it:
 
 # what a query costs when nothing is cached (restarts Postgres, drops the page cache)
 ./duckstore-bench-run.sh --engine postgres --sql-dir ./sql --cold --repeat 2
+
+# only the engine's own cache, for a machine without passwordless sudo
+./duckstore-bench-run.sh --engine postgres --sql-dir ./sql --cold-engine --repeat 2
 ```
+
+`--cold` needs to drop the operating system's page cache, which needs root:
+`<user> ALL=(root) NOPASSWD: /usr/bin/sh -c echo\ 3\ >\ /proc/sys/vm/drop_caches` in sudoers, or run it on the
+lab machines, whose setup already grants passwordless sudo. `--cold-engine` works anywhere and says in its header
+that the OS cache stayed warm, so the two are never confused.
 
 ## Before timing: the same answer
 
@@ -118,6 +126,9 @@ See `bench.conf.example`.
   docker-mssql-tuning` adds the persisted computed column that fixes it: revenue per month 84.8 s → 5.1 s, the
   large extract 53.4 s → 0.085 s, and SQL Server then beats Postgres on six of eight and DuckDB on one.
 
+- [Cold engine cache](../docs/results/bench-star-scale5-laptop-cold.md): emptying each engine's own buffer pool
+  changes a big scan by less than 10%, but Postgres's lookup goes from 0.1 ms to 12.3 ms (123×) and DuckDB pays a
+  20–30 ms start-up for every fresh process. The ranking does not move.
 - [Reports while the store is busy](../docs/results/loadtest-scale5-laptop-sqlserver.md): with reports on the store's
   own Postgres, checkout p95 doubles and 14 reports finish in a minute; moved to SQL Server's columnstore it is 124
   reports and the store barely notices; moved to the DuckDB service it is 311 reports, the fastest answers, and a

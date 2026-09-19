@@ -417,6 +417,14 @@ Measured at scale 5 on this laptop — full tables in
 `make docker-mssql-tuning-drop`, `make docker-mssql-star-index-drop` and `make docker-mssql-star-ordered-drop` undo
 each experiment, so both sides can be measured.
 
+**Cold caches.** `make bench-local ARGS="--yes --model star --cold-engine --repeat 2"` empties each engine's own
+buffer pool before every timed run (Postgres restarts, SQL Server runs `DBCC DROPCLEANBUFFERS`, DuckDB starts a new
+process). Result, in full in
+[docs/results/bench-star-scale5-laptop-cold.md](../docs/results/bench-star-scale5-laptop-cold.md): a big scan changes
+by less than 10% — it is CPU work, and the rows come back from the OS cache — while **Postgres's lookup goes from
+0.1 ms to 12.3 ms**, 123× slower, and DuckDB pays a 20–30 ms start-up per fresh process. The buffer pool is what
+lookups live on, not what scans live on.
+
 ### Network latency
 
 Everything above ran with direct connections inside one Docker network, where a round trip costs well under 1 ms.
