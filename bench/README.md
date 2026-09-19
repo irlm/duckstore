@@ -112,10 +112,11 @@ See `bench.conf.example`.
   star schema in Postgres on 14 of 15 questions; DuckDB still wins 13 of 15, but by 2–5× rather than 10–90×;
   Postgres wins the lookup by a mile; and two T-SQL patterns (`COUNT(DISTINCT)` with `ROLLUP`, `PERCENTILE_CONT`)
   cost SQL Server dearly.
-- [Store tables, four engines](../docs/results/bench-store-scale5-laptop.md): DuckDB wins 13 of 15 and by a wider
-  margin, both row engines win the lookup, and SQL Server picks nested loops for the daily exchange-rate join —
-  84.8 s that becomes 5.6 s with `OPTION (HASH JOIN)`, which is the same class of mistake Postgres made here on the
-  same question.
+- [Store tables, four engines](../docs/results/bench-store-scale5-laptop.md): DuckDB wins 13 of 15, both row engines
+  win the lookup, and SQL Server picks nested loops for the daily exchange-rate join because it cannot estimate
+  `CAST(placed_at AS date)` — the same class of mistake Postgres made here on the same question. `make
+  docker-mssql-tuning` adds the persisted computed column that fixes it: revenue per month 84.8 s → 5.1 s, the
+  large extract 53.4 s → 0.085 s, and SQL Server then beats Postgres on six of eight and DuckDB on one.
 
 ## Reading the numbers
 
