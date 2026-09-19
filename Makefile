@@ -166,3 +166,11 @@ docker-mssql-tuning:
 ## docker-mssql-tuning-drop: remove it again, to measure without it
 docker-mssql-tuning-drop:
 	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-tuning-drop.sql
+
+## docker-mssql-star-tuning: order the columnstore by date and add a b-tree for the lookup (analytics/mssql-star-tuning.sql)
+docker-mssql-star-tuning:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-tuning.sql
+
+## docker-mssql-star-tuning-drop: back to a plain clustered columnstore
+docker-mssql-star-tuning-drop:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-tuning-drop.sql
