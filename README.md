@@ -27,7 +27,12 @@ There are two implementations over the same databases and the same SQL files:
 - **Go**: one binary with the store, the analytics dashboard, the engine race and the SQL console.
   DuckDB runs **inside** the Go process (it is a library, not a server).
 - **.NET**: a Blazor app plus a separate DuckDB **analytics service**, all in Docker, with a **Compare** page
-  that runs 15 questions on both engines and both data models, and shows where the time goes.
+  that runs 15 questions on **four engines** (Postgres, SQL Server, pg_duckdb, DuckDB) and both data models, and
+  shows where the time goes.
+
+The questions also run as a **benchmark on real machines** ([bench/](bench/), [lab/](lab/)), where every engine is
+asked for its own timing and every answer is checked against Postgres first. Measured results, including SQL Server
+with a clustered columnstore and what tuning it is worth, are in [docs/results/](docs/results/).
 
 ## Results on a laptop
 

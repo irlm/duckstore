@@ -101,22 +101,24 @@ In Development, EF Core prints every SQL statement it runs to the terminal.
 
 ## The Compare page
 
-Each question can run **six ways**: three engines on two data models.
+Each question can run **eight ways**: four engines on two data models.
 
 | | Store tables: normalized, as the application writes them | Star schema: facts and dimensions built by the ETL |
 |---|---|---|
 | **Postgres** | `store.*`, sent by the web app over the Postgres protocol | `dw.*`, a copy made by `make docker-star` |
+| **SQL Server** | `store.*` in SQL Server, rowstore, with the same keys and indexes Postgres has | `dw.*` in SQL Server, with a **clustered columnstore index** on the facts |
 | **pg_duckdb** | the same `store.*` tables in the same Postgres, executed by DuckDB inside Postgres | the same `dw.*` copy, executed by DuckDB inside Postgres |
 | **DuckDB** | `raw.*`, the ETL's copy of the store tables, through the analytics service | `dw.*`, through the analytics service |
 
-- On the **store tables**, both engines run the **same SQL text** (see [analytics/README.md](../analytics/README.md)),
-  so the difference is the **engine**.
+- On the **store tables**, Postgres, pg_duckdb and DuckDB run the **same SQL text** (see
+  [analytics/README.md](../analytics/README.md)), so the difference is the **engine**. SQL Server runs its own T-SQL,
+  because the dialect differs — a file that does not exist is reported as missing, never replaced by another engine's SQL.
 - On the **same engine**, store tables vs star schema shows what the **data model** is worth: the ETL did the joins
   and the currency conversion once, instead of in every query.
 - Postgres runs go from the web app straight to Postgres. DuckDB runs go over HTTP to the analytics service and come
   back as JSON, so their times include the service boundary.
 
-All four answers must be equal. The store SQL only counts orders up to the warehouse **watermark** (the last order id
+All eight answers must be equal. The store SQL only counts orders up to the warehouse **watermark** (the last order id
 the ETL copied), and the star schema copy in Postgres remembers the watermark it was made from: after a new ETL, the
 page asks you to run `make docker-star` again. The page compares the results row by row, with a tolerance of one
 cent for money.
@@ -130,11 +132,22 @@ plan (`EXPLAIN ANALYZE`, it runs), with a short guide to reading that engine's p
 
 **Where the time goes.** Each run is split into phases:
 
-| Phase | Postgres | DuckDB |
+| Phase | Postgres and SQL Server | DuckDB |
 |---|---|---|
 | **Database** | From sending the query until the first row arrives. For a small result this is almost everything. | Measured inside the service: executing until the first row, then reading the other rows. |
 | **Network** | Reading the other rows from the connection and decoding them. | The HTTP time seen by the web app minus the service's own phases (sent in a `Server-Timing` header). It includes the network, Kestrel and HttpClient. |
-| **JSON** | None: the Postgres protocol is binary. | Serializing in the service plus parsing in the web app. |
+| **JSON** | None: both wire protocols are binary. | Serializing in the service plus parsing in the web app. |
+
+**SQL Server** is started on demand, because it wants memory next to Postgres and DuckDB:
+
+```bash
+make docker-mssql        # SQL Server 2025 Developer, password written to .env, port 51433
+make docker-mssql-load   # the warehouse copied in: rowstore store tables, columnstore star schema
+make docker-mssql-down   # stop it and get the memory back
+```
+
+Its plans come from `SET SHOWPLAN_TEXT` (estimated) and `SET STATISTICS PROFILE` (actual), the pair that matches
+`EXPLAIN` and `EXPLAIN ANALYZE`.
 
 ### Results at scale 5
 
@@ -374,6 +387,36 @@ What the numbers say:
   what that costs; `duckdb.max_memory` is 4 GB per connection by default), and it must never run the application's
   lookups. Set `duckdb.force_execution` only on the connections or role that run reports, never for the whole server.
 
+### SQL Server: the engine most teams already have
+
+`make docker-mssql` starts SQL Server 2025 Developer, `make docker-mssql-load` copies the warehouse into it (rowstore
+store tables with the same keys and indexes Postgres has, star schema with a clustered columnstore index). Every
+question has its own T-SQL in `analytics/<id>/<model>.mssql.sql`, and all 30 files were checked against Postgres row
+by row before any timing.
+
+Measured at scale 5 on this laptop — full tables in
+[docs/results/bench-star-scale5-laptop.md](../docs/results/bench-star-scale5-laptop.md) and
+[docs/results/bench-store-scale5-laptop.md](../docs/results/bench-store-scale5-laptop.md):
+
+- **Columnstore is DuckDB's real competitor, not row storage.** On the star schema SQL Server beat the same schema in
+  Postgres on 14 of 15 questions, and DuckDB's lead shrank from 10–90× to 2–5×.
+- **A columnstore is the wrong storage for a lookup** — "this customer's last 20 orders" took 61 ms, against 0.1 ms
+  in Postgres. `make docker-mssql-star-index` adds a b-tree next to the columnstore and it drops to under 1 ms, with
+  no effect on the reports. One table, both jobs.
+- **`make docker-mssql-star-ordered`** rebuilds the columnstore sorted by date. It made six questions slower and none
+  faster here, because the ETL already loads the facts in an order that follows the date. Kept as a documented
+  negative result.
+- **On the store tables SQL Server chose nested loops** for the join to the daily exchange-rate table, because it has
+  no statistics for `CAST(placed_at AS date)`: revenue per month took 84.8 s, and `UPDATE STATISTICS … WITH FULLSCAN`
+  made it worse (101.7 s). `make docker-mssql-tuning` adds a **persisted computed column** for that date, with an
+  index and statistics; the plan becomes one hash join and the same query takes 5.1 s — three times faster than
+  Postgres. The large extract went from 53.4 s to 0.085 s.
+  This is the same lesson Postgres taught here earlier with the exchange-rate CTE: **an engine that cannot estimate a
+  join picks a bad plan, whatever its name is.**
+
+`make docker-mssql-tuning-drop`, `make docker-mssql-star-index-drop` and `make docker-mssql-star-ordered-drop` undo
+each experiment, so both sides can be measured.
+
 ### Network latency
 
 Everything above ran with direct connections inside one Docker network, where a round trip costs well under 1 ms.
@@ -431,7 +474,8 @@ The **Load test** page (CLI: `dotnet DuckStore.Web.dll loadtest`, or `make docke
   so waiting for a free connection counts too. A test that sends the next request only when the last one finished
   would hide a slow database, because it would simply send fewer requests.
 - **Report users:** 2 people, each running 5 analytics questions one after the other (brand returns, active customers,
-  sales leaders, unusual days, revenue per month), on Postgres (store tables) or through the DuckDB service (star schema).
+  sales leaders, unusual days, revenue per month), on Postgres (store tables), through the DuckDB service (star schema),
+  or on SQL Server (star schema with a clustered columnstore).
 - **p95 and p99:** 95% and 99% of the operations were faster than this. Customers remember the slow page, so the tail
   matters more than the average.
 
@@ -473,6 +517,21 @@ What the numbers say:
   the database saves a server, not CPU.
 - **The reports themselves finish.** In 60 seconds the Postgres report users finished 15 reports (revenue per month
   alone takes 15 s). The DuckDB users finished 182 reports on 3 cores and 366 on the shared 16 threads.
+
+**With SQL Server as a third report target** (all containers sharing the CPU, 2026-09-19, full write-up in
+[docs/results/loadtest-scale5-laptop-sqlserver.md](../docs/results/loadtest-scale5-laptop-sqlserver.md)):
+
+| Store operation, p95 | Store only | + reports on Postgres | + reports on DuckDB service | + reports on SQL Server |
+|---|---:|---:|---:|---:|
+| Product page | 2.2 | 5.4 | 5.5 | **3.4** |
+| Order history | 1.9 | 2.8 | 3.2 | **2.4** |
+| Checkout | 19.8 | 42.5 | 31.3 | **28.6** |
+| Reports finished in 60 s | | 14 (p50 4.3 s) | **311 (p50 419 ms)** | 124 (p50 757 ms) |
+
+- **Any engine of its own beats reporting on the OLTP database.** SQL Server answered 8.9× more reports than Postgres,
+  DuckDB 22× more, and in both cases the store stayed faster than with reports on Postgres.
+- **SQL Server disturbed the store least, DuckDB answered fastest.** DuckDB takes every core it can for one query,
+  which is why its reports finish first and why the store notices it slightly more on a shared machine.
 
 Limits: one 60-second run per scenario; the load generator runs on the same machine; 100 operations per second is a
 small store; every scenario places about 600 orders, whose ids are above the warehouse watermark, so the Compare results
