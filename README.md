@@ -209,9 +209,11 @@ The SQL itself is meant to be read:
 
 ```
 analytics/              the 15 Compare questions: one folder each, SQL per data model and engine
+bench/                  benchmarks on real machines: one engine at a time, engine-reported timing
+lab/                    what to install on the lab machines, one file per setup
 cmd/duckstore/          the binary: seed, etl, serve, bench, sql
 cmd/seed/               seed only, without DuckDB (used by the Docker seed image)
-docker/                 Dockerfiles: seed, analytics, web
+docker/                 Dockerfiles: seed, analytics, web, postgres (pg_duckdb), duckdb CLI
 dotnet/                 the ASP.NET Core version: web app + analytics service
 etl/                    the ETL SQL, run by both the Go and the .NET version
 internal/config/        settings from environment variables

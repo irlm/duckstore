@@ -23,6 +23,7 @@ QUESTIONS=""
 SQL_DIR="${BENCH_SQL_DIR:-${SCRIPT_DIR}/sql}"
 DECIMALS=2
 SHOW=6
+TIMEOUT="${BENCH_TIMEOUT:-1800}"
 SORTED=0
 
 HOST="${BENCH_PG_HOST:-127.0.0.1}"
@@ -48,6 +49,7 @@ Usage: $0 --engine postgres|pgduckdb|duckdb|mssql [options]
   --sql-dir DIR         exported SQL root (default: ${SQL_DIR})
   --decimals N          decimals kept when comparing numbers (default: ${DECIMALS})
   --show N              differing lines to print (default: ${SHOW})
+  --timeout N           give up on a question after N seconds (default: ${TIMEOUT}; 0 = no limit)
   --sorted              compare the rows sorted, ignoring row order
   -h, --help
 EOF
@@ -94,21 +96,23 @@ question_ids() {
 # rows ENGINE FILE — the result of one question as tab separated lines, no header.
 rows() {
   local engine="$1" file="$2" client
+  local limit=()
+  [ "${TIMEOUT:-0}" -gt 0 ] && limit=(timeout "${TIMEOUT}s")
   case "$engine" in
     duckdb)
       read -ra client <<< "$DUCKDB_CMD"
       { echo "SET TimeZone='UTC';"; echo ".mode list"; echo ".separator \"\t\""; echo ".headers off"; cat "$file"; echo ";"; } \
-        | "${client[@]}" -readonly "$DUCKDB_FILE" 2>/dev/null
+        | "${limit[@]}" "${client[@]}" -readonly "$DUCKDB_FILE" 2>/dev/null
       ;;
     postgres|pgduckdb)
       read -ra client <<< "$PSQL_CMD"
       { [ "$engine" = "pgduckdb" ] && echo "SET duckdb.force_execution = true;"; cat "$file"; echo ";"; } \
-        | "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t -F $'\t' 2>/dev/null
+        | "${limit[@]}" "${client[@]}" -h "$HOST" -p "$PORT" -U "$USER_NAME" -d "$DB" -q -A -t -F $'\t' 2>/dev/null
       ;;
     mssql)
       read -ra client <<< "$SQLCMD_CMD"
       { echo "SET NOCOUNT ON;"; echo "GO"; cat "$file"; echo ";"; echo "GO"; } \
-        | "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 -W -s $'\t' 2>/dev/null
+        | "${limit[@]}" "${client[@]}" -S "${MSSQL_HOST},${MSSQL_PORT}" -U "$MSSQL_USER" -d "$MSSQL_DB" -C -h -1 -W -s $'\t' 2>/dev/null
       ;;
     *) die "unknown engine ${engine}" ;;
   esac
@@ -131,6 +135,7 @@ main() {
       --sql-dir) SQL_DIR="${2:-}"; shift 2 ;;
       --decimals) DECIMALS="${2:-}"; shift 2 ;;
       --show) SHOW="${2:-}"; shift 2 ;;
+      --timeout) TIMEOUT="${2:-}"; shift 2 ;;
       --sorted) SORTED=1; shift ;;
       --host) HOST="${2:-}"; shift 2 ;;
       --port) PORT="${2:-}"; shift 2 ;;
