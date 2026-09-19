@@ -158,3 +158,11 @@ bench-local:
 ## bench-verify: do two engines answer the same? (ARGS="--engine mssql --model store")
 bench-verify:
 	bash bench/duckstore-bench-verify.sh $(ARGS)
+
+## docker-mssql-tuning: add the persisted computed column a DBA would add (analytics/mssql-tuning.sql)
+docker-mssql-tuning:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-tuning.sql
+
+## docker-mssql-tuning-drop: remove it again, to measure without it
+docker-mssql-tuning-drop:
+	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-tuning-drop.sql
