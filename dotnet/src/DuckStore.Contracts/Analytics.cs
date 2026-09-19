@@ -77,7 +77,7 @@ public static class AnalyticCatalog
             "One aggregation per customer, then a second aggregation into buckets with a window total.",
             AnalyticKind.Analytics),
         new("detail-extract", "All order lines of one day (large result)",
-            "Every order line of the latest complete day, with product names and amounts.",
+            "Every order line of the newest day that has orders, with product names and amounts.",
             "The query itself is easy; moving tens of thousands of rows is not. Watch the transfer and JSON phases.",
             AnalyticKind.BigResult),
         new("customer-orders", "One customer's latest orders (lookup)",

@@ -40,6 +40,10 @@ source_run() { source "$TARGET" || true; set +e; }
     echo "PASS: normalize must not hide a difference" >> "$RESULTS"
   fi
 
+  assert_eq "normalize matches a timestamptz with a zone against datetime2" \
+    "$(printf 'x\t2026-09-17 11:43:59.507746+00\n' | normalize 2)" \
+    "$(printf 'x\t2026-09-17 11:43:59.5077460\n' | normalize 2)"
+
   # sqlcmd prints .96 and pads zeros where psql prints 0.96
   assert_eq "normalize reads a number without its leading zero" \
     "$(printf 'x\t.960000000000\n' | normalize 2)" "$(printf 'x\t0.96\n' | normalize 2)"

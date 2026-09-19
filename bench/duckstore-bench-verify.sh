@@ -71,7 +71,14 @@ normalize() {
         else if (v ~ /^-?[0-9]*\.[0-9]+([eE][-+]?[0-9]+)?$/) { v = sprintf("%.*f", d, v + 0) }
         else if (v ~ /^-?[0-9]+$/) { v = v + 0 }
         else if (v ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) {
-          sub(/T/, " ", v); sub(/\.[0-9]+$/, "", v); sub(/ 00:00:00$/, "", v)
+          # psql prints a timestamptz as 2026-09-17 11:43:59.507746+00, sqlcmd the same
+          # instant as 2026-09-17 11:43:59.5077460, DuckDB without the zone. Everything is
+          # UTC here, so the zone and the fraction go.
+          sub(/T/, " ", v)
+          sub(/[+-][0-9][0-9](:?[0-9][0-9])?$/, "", v)
+          sub(/Z$/, "", v)
+          sub(/\.[0-9]+$/, "", v)
+          sub(/ 00:00:00$/, "", v)
         }
         else if (v == "true" || v == "t") { v = "1" }
         else if (v == "false" || v == "f") { v = "0" }
