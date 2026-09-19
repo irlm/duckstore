@@ -106,6 +106,25 @@ Passwords come from the environment or `/etc/lab-secrets.env` (mode 600), never 
 `bench.conf` next to these scripts (git-ignored) holds the host names and paths of your lab, so the flags stay short.
 See `bench.conf.example`.
 
+## Reading the numbers
+
+Every engine is configured by its own convention, which is honest but not identical:
+
+| engine | memory it gets on the laptop |
+|---|---|
+| Postgres | `shared_buffers` 3 GB, plus whatever the OS page cache holds (often 10 GB+) |
+| SQL Server | `MSSQL_MEMORY_LIMIT_MB`, 4 GB by default, and it caches nothing outside that |
+| DuckDB | `Warehouse__MemoryLimit`, 6 GB, and it spills to disk beyond that |
+
+So a laptop run compares engines *as they are usually set up*, not with one budget. When a
+question matters, run it again with the same limit for everyone and say so — that is test 1.2
+in [lab/](../lab). SQL Server's limit is the one to raise first: with 4 GB the heavier
+store-table questions spill to tempdb, which shows up as `PAGEIOLATCH` waits.
+
+Other things that decide a number, in order of size: the **data model** (store tables vs star
+schema), whether the answer is **warm or cold**, the **indexes** present, and only then the
+engine.
+
 ## Results
 
 One row per timed run, tab separated, no header, appended to `~/results-duckstore-<engine>-<stamp>.tsv`:
