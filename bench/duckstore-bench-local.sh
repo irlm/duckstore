@@ -24,6 +24,7 @@ REPEAT=3
 WARMUP=1
 SCALE="${BENCH_SCALE:-5}"
 COLD=0
+TIMEOUT="${BENCH_TIMEOUT:-1800}"
 LIST_ONLY=0
 ASSUME_YES=0
 SKIP_EXPORT=0
@@ -45,6 +46,7 @@ Usage: $0 [options]
   --warmup N          discarded runs (default: ${WARMUP})
   --scale N           scale label for the results (default: ${SCALE})
   --cold              empty caches before every timed run
+  --timeout N         give up on a question after N seconds (default: ${TIMEOUT})
   --skip-export       reuse the SQL already in ${SQL_DIR}
   --yes               do not ask, run everything available
   --out FILE          append results here (default: \$HOME/results-duckstore-local-<stamp>.tsv)
@@ -223,7 +225,7 @@ export_sql() {
 
 run_engine() {
   local engine="$1" args=()
-  args+=(--engine "$engine" --sql-dir "$SQL_DIR" --model "$MODELS" --scale "$SCALE" --repeat "$REPEAT" --warmup "$WARMUP" --out "$OUT_FILE")
+  args+=(--engine "$engine" --sql-dir "$SQL_DIR" --model "$MODELS" --scale "$SCALE" --repeat "$REPEAT" --warmup "$WARMUP" --timeout "$TIMEOUT" --out "$OUT_FILE")
   [ -n "$QUESTIONS" ] && args+=(--questions "$QUESTIONS")
   [ "$COLD" -eq 1 ] && args+=(--cold)
   case "$engine" in
@@ -271,6 +273,7 @@ main() {
       --warmup) WARMUP="${2:-}"; shift 2 ;;
       --scale) SCALE="${2:-}"; shift 2 ;;
       --cold) COLD=1; shift ;;
+      --timeout) TIMEOUT="${2:-}"; shift 2 ;;
       --skip-export) SKIP_EXPORT=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
       --out) OUT_FILE="${2:-}"; shift 2 ;;
