@@ -106,6 +106,14 @@ Passwords come from the environment or `/etc/lab-secrets.env` (mode 600), never 
 `bench.conf` next to these scripts (git-ignored) holds the host names and paths of your lab, so the flags stay short.
 See `bench.conf.example`.
 
+## First results
+
+[docs/results/bench-star-scale5-laptop.md](../docs/results/bench-star-scale5-laptop.md): the 15 questions on the
+star schema, on one laptop, DuckDB vs SQL Server columnstore vs Postgres vs pg_duckdb, with every answer verified
+first. The short version: SQL Server's columnstore beats the same star schema in Postgres on 14 of 15 questions,
+DuckDB still wins 13 of 15 but by 2–5× rather than 10–90×, Postgres wins the lookup by a mile, and two T-SQL
+patterns (`COUNT(DISTINCT)` with `ROLLUP`, `PERCENTILE_CONT`) cost SQL Server dearly.
+
 ## Reading the numbers
 
 Every engine is configured by its own convention, which is honest but not identical:
