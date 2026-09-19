@@ -197,8 +197,10 @@ main() {
         continue
       fi
 
-      rows "$REFERENCE" "${ref_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/ref"
-      rows "$ENGINE" "${eng_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/eng"
+      # || true: when --timeout kills a client the pipeline fails, and that must end the
+      # question, not the whole run.
+      rows "$REFERENCE" "${ref_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/ref" || true
+      rows "$ENGINE" "${eng_dir}/${id}.sql" | normalize "$DECIMALS" > "${BENCH_TMP}/eng" || true
       if [ "$SORTED" -eq 1 ]; then
         sort -o "${BENCH_TMP}/ref" "${BENCH_TMP}/ref"
         sort -o "${BENCH_TMP}/eng" "${BENCH_TMP}/eng"
@@ -212,6 +214,11 @@ main() {
       # engine answered nothing: say so instead of printing a diff of every row.
       if [ "$eng_rows" -eq 0 ] && [ "$ref_rows" -gt 0 ]; then
         err "$(printf '%-34s no answer from %s within %ss' "${id}.${model}" "$ENGINE" "$TIMEOUT")"
+        different=$((different + 1))
+        continue
+      fi
+      if [ "$ref_rows" -eq 0 ] && [ "$eng_rows" -gt 0 ]; then
+        err "$(printf '%-34s no answer from %s within %ss' "${id}.${model}" "$REFERENCE" "$TIMEOUT")"
         different=$((different + 1))
         continue
       fi
