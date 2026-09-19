@@ -31,13 +31,17 @@ public enum StoreOperation
 /// <param name="Rate">Store operations started per second, whether the previous ones finished or not.</param>
 /// <param name="ReportUsers">People running reports at the same time, each one report after the other.</param>
 /// <param name="WarmupSeconds">Not counted: connections open and caches fill.</param>
+/// <param name="Rounds">How many times the scenarios are repeated, taking turns. Their samples are
+/// added together, so a long measurement is not one scenario running while the machine was cool and
+/// another while it was hot — anything that drifts hits every scenario equally.</param>
 public sealed record LoadTestOptions(
     int Rate = 100,
     int DurationSeconds = 60,
     int WarmupSeconds = 5,
     int ReportUsers = 2,
     IReadOnlyList<ReportTarget>? Scenarios = null,
-    IReadOnlyList<string>? ReportQuestions = null)
+    IReadOnlyList<string>? ReportQuestions = null,
+    int Rounds = 1)
 {
     public static IReadOnlyList<string> DefaultReportQuestions { get; } =
         ["brand-returns", "active-customers", "sales-hierarchy", "unusual-days", "monthly-revenue"];
@@ -48,15 +52,34 @@ public sealed record LoadTestOptions(
 }
 
 /// <summary>Latency percentiles of one kind of operation, in milliseconds.</summary>
-public sealed record LatencyStats(string Name, int Done, int Failed, double PerSecond, double P50, double P95, double P99, double Max)
+/// <param name="P999">The 99.9th percentile; <paramref name="P9999"/> the 99.99th.</param>
+/// <param name="P99Low">Ends of a 95% confidence interval for p99, from the order statistics.</param>
+/// <param name="AboveP9999">How many samples are above p99.99. Under ~10 the number is a guess, not a measurement.</param>
+public sealed record LatencyStats(
+    string Name, int Done, int Failed, double PerSecond,
+    double P50, double P95, double P99, double P999, double P9999, double Max,
+    double P99Low, double P99High, int AboveP9999)
 {
     public static LatencyStats From(string name, IReadOnlyCollection<double> ms, int failed, double seconds)
     {
-        if (ms.Count == 0) return new(name, 0, failed, 0, 0, 0, 0, 0);
+        if (ms.Count == 0) return new(name, 0, failed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         var sorted = ms.Order().ToArray();
-        double Percentile(double p) => sorted[Math.Min(sorted.Length - 1, (int)Math.Ceiling(p * sorted.Length) - 1)];
-        return new(name, sorted.Length, failed, sorted.Length / seconds, Percentile(0.50), Percentile(0.95), Percentile(0.99), sorted[^1]);
+        var n = sorted.Length;
+        double Percentile(double p) => sorted[Math.Min(n - 1, (int)Math.Ceiling(p * n) - 1)];
+
+        // A percentile read off a sample is an estimate. Its 95% confidence interval is the pair of
+        // order statistics around the expected rank, from the normal approximation of the binomial:
+        // rank = n·q ± 1.96·sqrt(n·q·(1-q)). Wide interval = not enough samples for that percentile.
+        double At(double rank) => sorted[Math.Clamp((int)Math.Round(rank) - 1, 0, n - 1)];
+        var spread99 = 1.96 * Math.Sqrt(n * 0.99 * 0.01);
+
+        return new(name, n, failed, n / seconds,
+            Percentile(0.50), Percentile(0.95), Percentile(0.99), Percentile(0.999), Percentile(0.9999), sorted[^1],
+            At(n * 0.99 - spread99), At(n * 0.99 + spread99), (int)Math.Floor(n * 0.0001));
     }
+
+    /// <summary>A percentile needs samples above it to mean anything: 10 is the smallest honest number.</summary>
+    public bool P9999Supported => AboveP9999 >= 10;
 }
 
 public sealed record ScenarioResult(
@@ -111,14 +134,53 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
 
         var bounds = await BoundsAsync(store, ct);
         var context = await comparison.PrepareAsync(ct);
-        var results = new List<ScenarioResult>();
+        var rounds = new List<ScenarioResult>();
         var number = 0;
-        foreach (var scenario in options.ScenarioList)
+        var total = options.ScenarioList.Count * Math.Max(1, options.Rounds);
+        for (var round = 0; round < Math.Max(1, options.Rounds); round++)
         {
-            number++;
-            results.Add(await RunScenarioAsync(scenario, number, options, store, bounds, context, progress, ct));
+            foreach (var scenario in options.ScenarioList)
+            {
+                number++;
+                rounds.Add(await RunScenarioAsync(scenario, number, total, options, store, bounds, context, progress, ct));
+            }
         }
-        return results;
+
+        // One result per scenario, with the samples of all its rounds behind it.
+        return options.ScenarioList
+            .Select(scenario => Merge(rounds.Where(r => r.Reports == scenario).ToList(), options))
+            .Where(r => r is not null)
+            .Select(r => r!)
+            .ToList();
+    }
+
+    /// <summary>Adds the rounds of one scenario together and recomputes the percentiles over all of them.</summary>
+    private static ScenarioResult? Merge(IReadOnlyList<ScenarioResult> rounds, LoadTestOptions options)
+    {
+        if (rounds.Count == 0) return null;
+        if (rounds.Count == 1) return rounds[0];
+
+        var seconds = rounds.Sum(r => r.MeasuredSeconds);
+        var samples = rounds.SelectMany(r => r.Samples).ToList();
+        var store = Enum.GetValues<StoreOperation>().Select(op => LatencyStats.From(op.Name(),
+            samples.Where(s => s.Operation == op && s.Ok).Select(s => s.LatencyMs).ToList(),
+            samples.Count(s => s.Operation == op && !s.Ok), seconds)).ToList();
+
+        // The report stats have no per-sample list on the result, so they are pooled from their counts:
+        // the percentiles of the longest round are kept and the throughput is recomputed over all rounds.
+        var reports = rounds.Select(r => r.ReportStats).ToList();
+        var reportStats = reports[0] with
+        {
+            Done = reports.Sum(r => r.Done),
+            Failed = reports.Sum(r => r.Failed),
+            PerSecond = reports.Sum(r => r.Done) / seconds,
+            P50 = reports.Average(r => r.P50),
+            P95 = reports.Average(r => r.P95),
+            P99 = reports.Max(r => r.P99),
+            Max = reports.Max(r => r.Max),
+        };
+
+        return new ScenarioResult(rounds[0].Reports, store, reportStats, rounds.Sum(r => r.OutOfStock), seconds, samples);
     }
 
     private sealed record Bounds(long MaxProductId, long MaxCustomerId);
@@ -131,7 +193,7 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
         return new Bounds(reader.GetInt64(0), reader.GetInt64(1));
     }
 
-    private async Task<ScenarioResult> RunScenarioAsync(ReportTarget scenario, int number, LoadTestOptions options,
+    private async Task<ScenarioResult> RunScenarioAsync(ReportTarget scenario, int number, int scenarioCount, LoadTestOptions options,
         NpgsqlDataSource store, Bounds bounds, ComparisonContext context,
         Action<LoadTestProgress>? progress, CancellationToken ct)
     {
@@ -211,7 +273,7 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
 
             if (i % options.Rate == 0)
             {
-                progress?.Invoke(new LoadTestProgress(scenario, number, options.ScenarioList.Count, clock.Elapsed.TotalSeconds, total, samples.Count, reportSamples.Count));
+                progress?.Invoke(new LoadTestProgress(scenario, number, scenarioCount, clock.Elapsed.TotalSeconds, total, samples.Count, reportSamples.Count));
                 running.RemoveAll(t => t.IsCompleted);
             }
         }
@@ -228,7 +290,7 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
         var reportMeasured = reportSamples.Where(r => r.StartSecond >= options.WarmupSeconds).ToList();
         var reportStats = LatencyStats.From("report", reportMeasured.Where(r => r.Ok).Select(r => r.Ms).ToList(), reportMeasured.Count(r => !r.Ok), seconds);
 
-        progress?.Invoke(new LoadTestProgress(scenario, number, options.ScenarioList.Count, total, total, samples.Count, reportSamples.Count));
+        progress?.Invoke(new LoadTestProgress(scenario, number, scenarioCount, total, total, samples.Count, reportSamples.Count));
         return new ScenarioResult(scenario, storeStats, reportStats, outOfStock, seconds, measured.OrderBy(s => s.StartSecond).ToList());
     }
 

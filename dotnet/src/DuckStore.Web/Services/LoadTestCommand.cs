@@ -27,6 +27,7 @@ public static class LoadTestCommand
                 case "--scenarios":
                     options = options with { Scenarios = args[++i].Split(',').Select(x => Enum.Parse<ReportTarget>(x, ignoreCase: true)).ToList() };
                     break;
+                case "--rounds": options = options with { Rounds = Int() }; break;
                 case "--csv": csvPath = args[++i]; break;
                 default: throw new ArgumentException($"Unknown option '{args[i]}'.");
             }
@@ -35,6 +36,11 @@ public static class LoadTestCommand
         Console.WriteLine($"Store traffic: {options.Rate} operations/s (70% product page, 20% order history, 10% checkout), " +
                           $"{options.DurationSeconds} s measured after {options.WarmupSeconds} s warm-up.");
         Console.WriteLine($"Reports: {options.ReportUsers} users, questions {string.Join(", ", options.QuestionList)}.");
+        if (options.Rounds > 1)
+        {
+            Console.WriteLine($"Rounds: {options.Rounds}. The scenarios take turns and their samples are added together, " +
+                              $"so anything that drifts during {options.Rounds * options.ScenarioList.Count * (options.DurationSeconds + options.WarmupSeconds) / 60} minutes hits all of them equally.");
+        }
         var lastPrinted = (Scenario: -1, Second: -1);
         var results = await runner.RunAsync(options, p =>
         {
@@ -48,10 +54,19 @@ public static class LoadTestCommand
         {
             Console.WriteLine();
             Console.WriteLine($"Scenario: {result.Reports.Name()}");
-            Console.WriteLine($"  {"operation",-15} {"done",7} {"failed",7} {"per s",7} {"p50 ms",9} {"p95 ms",9} {"p99 ms",9} {"max ms",9}");
+            Console.WriteLine($"  {"operation",-15} {"done",9} {"failed",6} {"per s",7} {"p50 ms",9} {"p95 ms",9} {"p99 ms",9} {"p99.9 ms",10} {"p99.99 ms",10} {"max ms",9}");
             foreach (var s in result.Store.Append(result.ReportStats).Where(s => s.Name != "report" || result.Reports != ReportTarget.None))
             {
-                Console.WriteLine($"  {s.Name,-15} {s.Done,7:N0} {s.Failed,7:N0} {s.PerSecond,7:N1} {s.P50,9:N1} {s.P95,9:N1} {s.P99,9:N1} {s.Max,9:N0}");
+                // p99.99 is printed only when enough samples sit above it to have measured anything.
+                var p9999 = s.P9999Supported ? $"{s.P9999,10:N1}" : $"{"-",10}";
+                Console.WriteLine($"  {s.Name,-15} {s.Done,9:N0} {s.Failed,6:N0} {s.PerSecond,7:N1} {s.P50,9:N1} {s.P95,9:N1} {s.P99,9:N1} {s.P999,10:N1} {p9999} {s.Max,9:N0}");
+            }
+            Console.WriteLine("  p99 with a 95% confidence interval from the order statistics:");
+            foreach (var s in result.Store)
+            {
+                Console.WriteLine($"  {s.Name,-15} p99 {s.P99,9:N1} ms  [{s.P99Low:N1} .. {s.P99High:N1}]  " +
+                                  $"{s.Done:N0} samples, {(int)(s.Done * 0.0001)} above p99.99" +
+                                  (s.P9999Supported ? "" : " — too few for p99.99"));
             }
             if (result.OutOfStock > 0) Console.WriteLine($"  ({result.OutOfStock} checkouts found no stock and rolled back)");
         }

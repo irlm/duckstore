@@ -99,18 +99,23 @@ docker-pgduckdb:
 docker-loadtest:
 	docker compose exec web dotnet DuckStore.Web.dll loadtest $(ARGS)
 
-# CPUs for docker-loadtest-separate (a 16-thread machine: 4 cores for Postgres, 3 for analytics, 1 for web + proxy).
-PG_CPUS ?= 0-7
-ANALYTICS_CPUS ?= 8-13
-APP_CPUS ?= 14-15
+# CPUs for docker-loadtest-separate, like four separate servers sharing a 16-thread machine:
+# Postgres 6 threads, the analytics service 3, SQL Server 4, the web app and load generator 3.
+# SQL Server is only there when the mssql profile runs; the target ignores it otherwise.
+PG_CPUS ?= 0-5
+ANALYTICS_CPUS ?= 6-8
+MSSQL_CPUS ?= 9-12
+APP_CPUS ?= 13-15
 
-## docker-loadtest-separate: the same, with Postgres and the analytics service on their own cores, like separate servers
+## docker-loadtest-separate: the same, with every engine on its own cores, like separate servers
 docker-loadtest-separate:
 	docker update --cpuset-cpus $(PG_CPUS) duckstore-postgres
 	docker update --cpuset-cpus $(ANALYTICS_CPUS) duckstore-analytics
+	-docker update --cpuset-cpus $(MSSQL_CPUS) duckstore-mssql
 	docker update --cpuset-cpus $(APP_CPUS) duckstore-web duckstore-toxiproxy
 	docker compose exec web dotnet DuckStore.Web.dll loadtest $(ARGS); status=$$?; \
 	docker update --cpuset-cpus 0-$$(($$(nproc) - 1)) duckstore-postgres duckstore-analytics duckstore-web duckstore-toxiproxy; \
+	docker update --cpuset-cpus 0-$$(($$(nproc) - 1)) duckstore-mssql || true; \
 	exit $$status
 
 ## docker-compare: run every Compare question from the web container and print the timings
