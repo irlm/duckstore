@@ -148,7 +148,7 @@
                                NetworkLabel="@s.Measurement?.Network.Label"
                                Unavailable="@_context?.Unavailable(approach)"
                                Explain="(analyze, ct) => Runner.ExplainAsync(approach, analytic.Id, _context!, analyze, ct)"
-                               PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : info.PgDuckDb ? PgDuckDbPlanHelp : PostgresPlanHelp)" Busy="_busy"
+                               PlanHelp="@(info.IsDuckDb ? DuckDbPlanHelp : info.PgDuckDb ? PgDuckDbPlanHelp : info.SqlServer ? SqlServerPlanHelp : PostgresPlanHelp)" Busy="_busy"
                                Sql="@SqlFor(analytic.Id, info)" ScaleMs="Scale(s)" />
             }
         </div>
@@ -194,8 +194,14 @@
     }
 
     // Rows = engine, columns = data model.
+    // Row by row: the engine changes, the two columns are the two data models.
     private static readonly Approach[] GridOrder =
-        [Approach.PostgresStore, Approach.PostgresStar, Approach.PgDuckDbStore, Approach.PgDuckDbStar, Approach.DuckDbStore, Approach.DuckDbStar];
+    [
+        Approach.PostgresStore, Approach.PostgresStar,
+        Approach.SqlServerStore, Approach.SqlServerStar,
+        Approach.PgDuckDbStore, Approach.PgDuckDbStar,
+        Approach.DuckDbStore, Approach.DuckDbStar,
+    ];
 
     private readonly Dictionary<string, CardState> _state = AnalyticCatalog.All.ToDictionary(a => a.Id, _ => new CardState());
     private readonly HashSet<Approach> _selected = [.. Enum.GetValues<Approach>()];
@@ -216,6 +222,11 @@
         "per loop; compare \"rows\" (estimated) with \"actual rows\". \"Buffers: shared hit\" = pages found in memory, " +
         "\"read\" = pages read from disk, like logical and physical reads in SET STATISTICS IO. " +
         "\"Workers Launched\" = parallel workers, like MAXDOP.";
+
+    private const string SqlServerPlanHelp =
+        "The text plan, as SET SHOWPLAN_TEXT gives it: read from the most indented line up. Watch the join operators — " +
+        "Nested Loops means one seek per row, Hash Match builds a table once. A parallel plan shows Parallelism " +
+        "(Gather Streams / Repartition Streams).";
 
     private const string DuckDbPlanHelp =
         "Read from the bottom boxes up: the scans run first. Each box is one operator; with the actual plan it shows " +

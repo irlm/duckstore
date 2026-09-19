@@ -16,6 +16,9 @@ public enum ReportTarget
 
     /// <summary>Reports through the analytics service (DuckDB, star schema).</summary>
     DuckDb,
+
+    /// <summary>Reports on SQL Server (star schema, clustered columnstore).</summary>
+    SqlServer,
 }
 
 public enum StoreOperation
@@ -72,6 +75,7 @@ public static class LoadTestText
     {
         ReportTarget.None => "store only",
         ReportTarget.Postgres => "store + reports on Postgres",
+        ReportTarget.SqlServer => "store + reports on SQL Server",
         _ => "store + reports on DuckDB service",
     };
 
@@ -150,7 +154,14 @@ public sealed class LoadTestRunner(IConfiguration config, ComparisonRunner compa
                 var start = clock.Elapsed.TotalSeconds;
                 try
                 {
-                    var approach = scenario == ReportTarget.Postgres ? Approach.PostgresStore : Approach.DuckDbStar;
+                    // The store always runs on Postgres; only the reports move. Postgres answers them
+                    // from the store tables it already has, the other two from their own star schema.
+                    var approach = scenario switch
+                    {
+                        ReportTarget.Postgres => Approach.PostgresStore,
+                        ReportTarget.SqlServer => Approach.SqlServerStar,
+                        _ => Approach.DuckDbStar,
+                    };
                     var run = await comparison.RunAsync(approach, id, context, NetworkSetting.Direct, stop.Token);
                     reportSamples.Add((start, run.TotalMs, run.Error is null));
                 }

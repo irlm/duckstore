@@ -11,7 +11,8 @@
     Postgres for @_duration seconds: @_rate operations per second, 70% product pages (3 reads by key), 20% order histories
     (a lookup) and 10% checkouts (a write transaction that locks stock rows, updates them and inserts an order, its lines,
     a payment and a shipment). At the same time, <b>report users</b> run analytics questions one after the other, either on
-    the same Postgres (store tables) or through the analytics service (DuckDB, star schema).
+    the same Postgres (store tables), through the analytics service (DuckDB, star schema), or on SQL Server
+    (star schema with a clustered columnstore).
 </MudText>
 <MudText Typo="Typo.body2" Class="mb-3" Style="max-width: 100ch; opacity: .8">
     The traffic is <i>open loop</i>: operations start on schedule even when the database is slow, like customers who do not
@@ -119,7 +120,7 @@
     private int _rate = 100;
     private int _duration = 60;
     private int _reportUsers = 2;
-    private readonly List<ReportTarget> _scenarios = [ReportTarget.None, ReportTarget.Postgres, ReportTarget.DuckDb];
+    private readonly List<ReportTarget> _scenarios = [ReportTarget.None, ReportTarget.Postgres, ReportTarget.DuckDb];  // SQL Server is opt-in: it needs make docker-mssql-load
     private bool _running;
     private LoadTestProgress? _progress;
     private IReadOnlyList<ScenarioResult>? _results;
@@ -136,6 +137,8 @@
         (ReportTarget.None, true) => "#199e70",
         (ReportTarget.Postgres, false) => "#2a78d6",
         (ReportTarget.Postgres, true) => "#3987e5",
+        (ReportTarget.SqlServer, false) => "#4a3aa7",
+        (ReportTarget.SqlServer, true) => "#9085e9",
         (_, false) => "#eb6834",
         (_, true) => "#d95926",
     };

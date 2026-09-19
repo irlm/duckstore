@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using DuckStore.Contracts;
 using Npgsql;
@@ -16,7 +17,7 @@ public enum PhaseKind
 
 public sealed record TimingPhase(string Name, double Ms, PhaseKind Kind);
 
-/// <summary>The ways to answer a question: three engines × two data models.</summary>
+/// <summary>The ways to answer a question: four engines × two data models.</summary>
 public enum Approach
 {
     PostgresStore,
@@ -25,11 +26,14 @@ public enum Approach
     DuckDbStar,
     PgDuckDbStore,
     PgDuckDbStar,
+    SqlServerStore,
+    SqlServerStar,
 }
 
 /// <param name="IsDuckDb">Runs in the analytics service (HTTP), not in Postgres.</param>
 /// <param name="PgDuckDb">Runs in Postgres, executed by DuckDB inside Postgres (the pg_duckdb extension).</param>
-public sealed record ApproachInfo(Approach Id, string Name, string Slug, bool IsDuckDb, DataModel Model, string Path, bool PgDuckDb = false);
+/// <param name="SqlServer">Runs in SQL Server, on its own T-SQL (analytics/&lt;id&gt;/&lt;model&gt;.mssql.sql).</param>
+public sealed record ApproachInfo(Approach Id, string Name, string Slug, bool IsDuckDb, DataModel Model, string Path, bool PgDuckDb = false, bool SqlServer = false);
 
 public static class Approaches
 {
@@ -41,6 +45,8 @@ public static class Approaches
         new(Approach.DuckDbStar, "DuckDB · star schema", "duckdb-star", true, DataModel.Star, "web → HTTP → analytics service → DuckDB: dw.* star schema"),
         new(Approach.PgDuckDbStore, "pg_duckdb · store tables", "pgduckdb-store", false, DataModel.Store, "web → Postgres → DuckDB inside Postgres: store.* tables", PgDuckDb: true),
         new(Approach.PgDuckDbStar, "pg_duckdb · star schema", "pgduckdb-star", false, DataModel.Star, "web → Postgres → DuckDB inside Postgres: dw.* copy of the star schema", PgDuckDb: true),
+        new(Approach.SqlServerStore, "SQL Server · store tables", "mssql-store", false, DataModel.Store, "web → SQL Server: store.* rowstore tables with the same indexes as Postgres", SqlServer: true),
+        new(Approach.SqlServerStar, "SQL Server · star schema", "mssql-star", false, DataModel.Star, "web → SQL Server: dw.* star schema with a clustered columnstore index", SqlServer: true),
     ];
 
     public static ApproachInfo Info(this Approach approach) => All[(int)approach];
@@ -109,7 +115,7 @@ public sealed record QuestionMeasurement(string AnalyticId, IReadOnlyList<Approa
 /// <param name="PostgresStarMaxOrderId">The watermark of the star schema copy in Postgres (null = no copy).</param>
 /// <param name="PostgresAnalyticsIndexes">How many indexes of analytics/postgres-indexes.sql exist on the store tables.</param>
 /// <param name="PgDuckDbVersion">The version of the pg_duckdb extension in Postgres (null = not installed).</param>
-public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId, int PostgresAnalyticsIndexes, string? PgDuckDbVersion = null)
+public sealed record ComparisonContext(long MaxOrderId, long CustomerId, WarehouseInfo? Warehouse, long? PostgresStarMaxOrderId, int PostgresAnalyticsIndexes, string? PgDuckDbVersion = null, string? SqlServerVersion = null)
 {
     public string IndexesText => PostgresAnalyticsIndexes == 0
         ? "Postgres store tables without the analytics indexes (make docker-indexes)"
@@ -126,6 +132,8 @@ public sealed record ComparisonContext(long MaxOrderId, long CustomerId, Warehou
             "Postgres has no copy of the star schema yet. Run `make docker-star` (or `dotnet DuckStore.Analytics.dll star-to-postgres`).",
         Approach.PostgresStar or Approach.PgDuckDbStar when !PostgresStarReady =>
             $"The star schema copy in Postgres has orders up to #{PostgresStarMaxOrderId:N0}, the warehouse up to #{MaxOrderId:N0}. Run `make docker-star` again.",
+        Approach.SqlServerStore or Approach.SqlServerStar when SqlServerVersion is null =>
+            "SQL Server is not reachable. Run `make docker-mssql` and `make docker-mssql-load`.",
         _ => null,
     };
 }
@@ -200,7 +208,26 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         await using var extension = postgres.CreateCommand("SELECT extversion FROM pg_extension WHERE extname = 'pg_duckdb'");
         var pgDuckDbVersion = await extension.ExecuteScalarAsync(ct) as string;
 
-        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId, analyticsIndexes, pgDuckDbVersion);
+        return new ComparisonContext(maxOrderId, customerId, warehouse, starMaxOrderId, analyticsIndexes, pgDuckDbVersion,
+            await SqlServerVersionAsync(ct));
+    }
+
+    /// <summary>The SQL Server edition line, or null when there is none to talk to.</summary>
+    private async Task<string?> SqlServerVersionAsync(CancellationToken ct)
+    {
+        if (config.GetConnectionString("SqlServer") is not { Length: > 0 } connectionString) return null;
+        try
+        {
+            await using var connection = new Microsoft.Data.SqlClient.SqlConnection(connectionString);
+            await connection.OpenAsync(ct);
+            await using var command = new Microsoft.Data.SqlClient.SqlCommand(
+                "SELECT concat(cast(serverproperty('ProductVersion') as varchar(32)), ' ', cast(serverproperty('Edition') as varchar(64)))", connection);
+            return await command.ExecuteScalarAsync(ct) as string;
+        }
+        catch (Exception e) when (e is Microsoft.Data.SqlClient.SqlException or InvalidOperationException)
+        {
+            return null; // not started, or no such database yet
+        }
     }
 
     /// <summary>
@@ -239,9 +266,16 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
     }
 
     public Task<ApproachRun> RunAsync(Approach approach, string id, ComparisonContext context, NetworkSetting network, CancellationToken ct = default) =>
-        approach.Info() is { IsDuckDb: true } info
-            ? RunDuckDbAsync(approach, id, info.Model, context, network, ct)
-            : RunPostgresAsync(approach, id, approach.Info().Model, context, network, ct);
+        approach.Info() switch
+        {
+            { IsDuckDb: true, Model: var model } => RunDuckDbAsync(approach, id, model, context, network, ct),
+            { SqlServer: true, Model: var model } => RunSqlServerAsync(approach, id, model, context, ct),
+            { Model: var model } => RunPostgresAsync(approach, id, model, context, network, ct),
+        };
+
+    /// <summary>The T-SQL of a question, or null when it has none (the dialects differ too much to share).</summary>
+    public static string? SqlServerSqlFor(string id, DataModel model) =>
+        Library.Has(id, model, "mssql") ? Library.For(id, model, "mssql") : null;
 
 
     private async Task<ApproachRun> RunPostgresAsync(Approach approach, string id, DataModel model, ComparisonContext context, NetworkSetting network, CancellationToken ct)
@@ -309,6 +343,118 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         }
     }
 
+    // SQL Server: the same shape as the Postgres path, so the phases mean the same thing. The SQL
+    // is the T-SQL file of the question — a dialect never falls back to another engine's SQL.
+    private async Task<ApproachRun> RunSqlServerAsync(Approach approach, string id, DataModel model, ComparisonContext context, CancellationToken ct)
+    {
+        if (SqlServerSqlFor(id, model) is not { } sql)
+        {
+            return new ApproachRun(approach, null, [], 0, null,
+                $"No T-SQL for this question: add analytics/{id}/{model.ToString().ToLowerInvariant()}.mssql.sql.");
+        }
+        if (config.GetConnectionString("SqlServer") is not { Length: > 0 } connectionString)
+        {
+            return new ApproachRun(approach, null, [], 0, null, "ConnectionStrings:SqlServer is not set.");
+        }
+
+        try
+        {
+            await using var connection = new Microsoft.Data.SqlClient.SqlConnection(connectionString);
+            await connection.OpenAsync(ct); // pooled by SqlClient; not timed
+            await using var command = new Microsoft.Data.SqlClient.SqlCommand(sql, connection) { CommandTimeout = 1800 };
+            if (sql.Contains("@max_order_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("@max_order_id", context.MaxOrderId);
+            if (sql.Contains("@customer_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("@customer_id", context.CustomerId);
+
+            var roundTripMs = double.MaxValue;
+            for (var ping = 0; ping < 2; ping++)
+            {
+                await using var select1 = new Microsoft.Data.SqlClient.SqlCommand("SELECT 1", connection);
+                var pingClock = Stopwatch.StartNew();
+                await select1.ExecuteScalarAsync(ct);
+                roundTripMs = Math.Min(roundTripMs, pingClock.Elapsed.TotalMilliseconds);
+            }
+
+            var clock = Stopwatch.StartNew();
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var hasRow = await reader.ReadAsync(ct);
+            var executeMs = clock.Elapsed.TotalMilliseconds;
+            var roundTrip = Math.Min(roundTripMs, executeMs);
+
+            var columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+            var rows = new List<object?[]>();
+            long count = 0;
+            while (hasRow)
+            {
+                count++;
+                if (rows.Count < 250_000)
+                {
+                    var row = new object?[reader.FieldCount];
+                    for (var i = 0; i < row.Length; i++)
+                    {
+                        row[i] = Cells.Normalize(reader.IsDBNull(i) ? null : reader.GetValue(i));
+                    }
+                    rows.Add(row);
+                }
+                hasRow = await reader.ReadAsync(ct);
+            }
+            var totalMs = clock.Elapsed.TotalMilliseconds;
+
+            var result = new AnalyticResult
+            {
+                AnalyticId = id, Engine = "mssql", Sql = sql, Columns = columns, Rows = rows,
+                RowCount = count, Truncated = count > rows.Count, ExecuteMs = executeMs, ReadRowsMs = totalMs - executeMs,
+            };
+            return new ApproachRun(approach, result,
+            [
+                new("Round trip to SQL Server (measured with SELECT 1)", roundTrip, PhaseKind.Transfer),
+                new("SQL Server executes (until the first row)", executeMs - roundTrip, PhaseKind.Database),
+                new("Rows over the network + decoding", totalMs - executeMs, PhaseKind.Transfer),
+            ], totalMs, null, null);
+        }
+        catch (Exception e) when (e is Microsoft.Data.SqlClient.SqlException or InvalidOperationException && !ct.IsCancellationRequested)
+        {
+            return new ApproachRun(approach, null, [], 0, null, e.Message);
+        }
+    }
+
+    // SQL Server's EXPLAIN: SHOWPLAN_TEXT returns the plan without running the query, STATISTICS
+    // PROFILE runs it and adds the actual row counts — the same pair as EXPLAIN / EXPLAIN ANALYZE.
+    private async Task<AnalyticPlan> SqlServerPlanAsync(string id, DataModel model, ComparisonContext context, bool analyze, CancellationToken ct)
+    {
+        var sql = SqlServerSqlFor(id, model) ?? throw new InvalidOperationException($"No T-SQL for {id} ({model}).");
+        var connectionString = config.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("ConnectionStrings:SqlServer is not set.");
+
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        var setting = analyze ? "SET STATISTICS PROFILE ON" : "SET SHOWPLAN_TEXT ON";
+        await using (var on = new Microsoft.Data.SqlClient.SqlCommand(setting, connection)) await on.ExecuteNonQueryAsync(ct);
+
+        var text = new StringBuilder();
+        var clock = Stopwatch.StartNew();
+        await using (var command = new Microsoft.Data.SqlClient.SqlCommand(sql, connection) { CommandTimeout = 1800 })
+        {
+            if (sql.Contains("@max_order_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("@max_order_id", context.MaxOrderId);
+            if (sql.Contains("@customer_id", StringComparison.Ordinal)) command.Parameters.AddWithValue("@customer_id", context.CustomerId);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            do
+            {
+                // SHOWPLAN_TEXT returns StmtText; STATISTICS PROFILE returns the query's rows first
+                // and the plan in the last result set, where StmtText is also the column to read.
+                var column = Enumerable.Range(0, reader.FieldCount).FirstOrDefault(i => reader.GetName(i) == "StmtText", -1);
+                if (column < 0) continue;
+                while (await reader.ReadAsync(ct))
+                {
+                    if (!reader.IsDBNull(column)) text.AppendLine(reader.GetString(column));
+                }
+            }
+            while (await reader.NextResultAsync(ct));
+        }
+
+        return new AnalyticPlan(id, "mssql", analyze, text.ToString(), clock.Elapsed.TotalMilliseconds);
+    }
+
     private async Task<ApproachRun> RunDuckDbAsync(Approach approach, string id, DataModel model, ComparisonContext context, NetworkSetting network, CancellationToken ct)
     {
         try
@@ -353,6 +499,8 @@ public sealed class ComparisonRunner(NpgsqlDataSource postgres, AnalyticsApiClie
         {
             return await analytics.PlanAsync(id, Request(context, info.Model), analyze, ct);
         }
+
+        if (info.SqlServer) return await SqlServerPlanAsync(id, info.Model, context, analyze, ct);
 
         var sql = PostgresSqlFor(id, info.Model);
         await using var connection = await PostgresFor(info, NetworkSetting.Direct).OpenConnectionAsync(ct);

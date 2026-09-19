@@ -111,6 +111,9 @@ services:
     container_name: duckstore-web
     environment:
       ConnectionStrings__Store: Host=postgres;Port=5432;Database=store;Username=store;Password=store;GSS Encryption Mode=Disable
+      # SQL Server as a fourth engine on the Compare page and a third report target in the load
+      # test. Empty unless the mssql profile runs, and then the approaches say so instead of failing.
+      ConnectionStrings__SqlServer: Server=mssql,1433;Database=duckstore;User Id=sa;Password=${MSSQL_SA_PASSWORD:-};TrustServerCertificate=True;Encrypt=False
       # Container to container: the service name is the host name.
       Analytics__BaseUrl: http://analytics:8080/
       # The same two services through Toxiproxy, for the Compare page's "Network" setting.
