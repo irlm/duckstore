@@ -118,6 +118,11 @@ See `bench.conf.example`.
   docker-mssql-tuning` adds the persisted computed column that fixes it: revenue per month 84.8 s → 5.1 s, the
   large extract 53.4 s → 0.085 s, and SQL Server then beats Postgres on six of eight and DuckDB on one.
 
+- [Reports while the store is busy](../docs/results/loadtest-scale5-laptop-sqlserver.md): with reports on the store's
+  own Postgres, checkout p95 doubles and 14 reports finish in a minute; moved to SQL Server's columnstore it is 124
+  reports and the store barely notices; moved to the DuckDB service it is 311 reports, the fastest answers, and a
+  slightly busier store.
+
 ## Reading the numbers
 
 Every engine is configured by its own convention, which is honest but not identical:
