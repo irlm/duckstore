@@ -187,3 +187,7 @@ docker-mssql-star-ordered:
 ## docker-mssql-star-ordered-drop: back to a plain clustered columnstore
 docker-mssql-star-ordered-drop:
 	docker compose exec -T mssql sh -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d duckstore -b' < analytics/mssql-star-ordered-drop.sql
+
+## charts: redraw docs/results/charts.html from the measured TSV and CSV files
+charts:
+	python3 bench/make-charts.py

@@ -114,6 +114,20 @@ Passwords come from the environment or `/etc/lab-secrets.env` (mode 600), never 
 `bench.conf` next to these scripts (git-ignored) holds the host names and paths of your lab, so the flags stay short.
 See `bench.conf.example`.
 
+## Seeing the results
+
+[docs/results/charts.html](../docs/results/charts.html) draws everything measured so far — open it in a browser, it
+needs no server and no network. `make charts` redraws it from the TSV and CSV files after a new run.
+
+| chart | what it answers |
+|---|---|
+| grouped bars, one row per question | which engine is fastest at what, on a log scale that spans five decades |
+| min–median–max "candles" | how much the runs of one question differed: a long line means the machine decided that number, not the engine |
+| warm against cold | what each engine's own buffer pool is worth |
+| percentile lines, p50 → p99.99 | the tail of the store while reports run, and where the four scenarios meet |
+| latency histograms | where the operations actually landed, and the second hump that is the tail |
+| before and after tuning | what one persisted computed column did to SQL Server |
+
 ## First results
 
 - [Star schema, four engines](../docs/results/bench-star-scale5-laptop.md): SQL Server's columnstore beats the same
