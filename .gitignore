@@ -23,3 +23,7 @@ lab/lab.env
 # lab benchmark settings and exported SQL
 bench/bench.conf
 bench/sql/
+
+# overnight run bookkeeping
+bench/logs/
+bench/.overnight-scale20.state
