@@ -74,7 +74,9 @@ run_step() {
 
 compose() { (cd "$BENCH_REPO_DIR" && docker compose "$@" < /dev/null); }
 
-step_seed()  { compose run --rm seed -scale "$SCALE"; }
+# --build on the seeder: an image from before the last schema change seeds data the ETL cannot
+# read. That cost one night: fx_rates_daily was missing and the extract stopped at the first table.
+step_seed()  { compose run --rm --build seed -scale "$SCALE"; }
 step_etl()   { compose run --rm --no-deps analytics etl; }
 step_star()  { compose run --rm --no-deps analytics star-to-postgres; }
 step_mssql() { compose run --rm --no-deps analytics mssql-load; }
