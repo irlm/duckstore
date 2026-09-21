@@ -33,7 +33,8 @@ There are two implementations over the same databases and the same SQL files:
 The questions also run as a **benchmark on real machines** ([bench/](bench/), [lab/](lab/)), where every engine is
 asked for its own timing and every answer is checked against Postgres first. Measured results, including SQL Server
 with a clustered columnstore and what tuning it is worth, are in [docs/results/](docs/results/), drawn as charts in
-[docs/results/charts.html](docs/results/charts.html) (`make charts`).
+[docs/results/charts.html](docs/results/charts.html) (`make charts`), and turned into decisions in
+[docs/04-when-to-use-duckdb.md](docs/04-when-to-use-duckdb.md).
 
 ## Results on a laptop
 

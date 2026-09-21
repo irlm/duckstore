@@ -24,6 +24,9 @@ SCALE="${SCALE:-20}"
 REPEAT="${REPEAT:-3}"
 WARMUP="${WARMUP:-1}"
 TIMEOUT="${TIMEOUT:-1800}"
+# Rows per bulk-copy batch. At scale 20 the loader held ~10 GB with the default 50,000 —
+# DuckDB's own limit plus what SqlBulkCopy buffers — and the laptop went into swap.
+BATCH_SIZE="${BATCH_SIZE:-20000}"
 STATE="${BENCH_DIR}/.overnight-scale20.state"
 LOGS="${BENCH_DIR}/logs"
 OUT_TSV="${BENCH_REPO_DIR}/docs/results/bench-star-scale${SCALE}-laptop.tsv"
@@ -79,7 +82,7 @@ compose() { (cd "$BENCH_REPO_DIR" && docker compose "$@" < /dev/null); }
 step_seed()  { compose run --rm --build seed -scale "$SCALE"; }
 step_etl()   { compose run --rm --no-deps analytics etl; }
 step_star()  { compose run --rm --no-deps analytics star-to-postgres; }
-step_mssql() { compose run --rm --no-deps analytics mssql-load; }
+step_mssql() { compose run --rm --no-deps analytics mssql-load --batch-size "$BATCH_SIZE"; }
 
 step_sql() {
   compose run --rm --no-deps analytics export-sql --out /data/bench-sql --engines postgres,duckdb,mssql

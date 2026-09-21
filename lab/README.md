@@ -7,6 +7,9 @@ Tests on real machines instead of containers on one laptop. The laptop results a
 `setup-<n>-<what it compares>.md`. When a later scenario needs a different OS or different software, it gets a new
 setup file.
 
+**Working with NetworkLab:** what each repository owns, and the interface between them, is in
+[CONTRACT.md](CONTRACT.md).
+
 ## How it works
 
 1. Give a setup file to the setup agent. It installs the OS and software, runs the checks and fills in the send-back
